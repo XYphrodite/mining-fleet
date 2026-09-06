@@ -152,7 +152,6 @@ public sealed class CpuReservationService : BackgroundService
     private readonly ILogger<CpuReservationService> _log;
     private readonly IReadOnlyList<ulong> _cores = CpuReservation.PhysicalCores();
 
-    private ulong? _applied;
     private int _appliedPid;
 
     public CpuReservationService(MinerConfigStore config, ILogger<CpuReservationService> log)
@@ -219,7 +218,6 @@ public sealed class CpuReservationService : BackgroundService
                             "CPU reservation: {Reserved} core(s) held back from xmrig (pid {Pid}); its mask is now 0x{Mask:X}.",
                             Math.Min(reserved, _cores.Count - 1), miner.Id, target);
 
-                    _applied = target;
                     _appliedPid = miner.Id;
                 }
                 catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)

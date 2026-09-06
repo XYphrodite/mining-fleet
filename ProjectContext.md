@@ -623,6 +623,18 @@ xmrig-fleet/
       unmanageable until somebody ran `sc start` by hand. Reproduced off the node by running the
       same command line with a redirected stdin — 1 s and an error, against 6.1 s for `ping`.
       Fixed in 1.13.2 by delaying with `ping` and trying three times
+- [x] **`reservedCores` pushed, stored and re-asserted**, on `mks68i7rtx` on 2026-09-06. The node
+      answered with `reservedCores=2` read back from its own `miner.json`, and the claim that the
+      service keeps the mask applied was tested rather than assumed: the miner's affinity was
+      forced back to the whole machine (1048575) by hand, and the agent had restored 1048560
+      **within six seconds**, logging both the lift and the re-application. Hashrate 6,732 H/s,
+      huge pages 1180/1180. The topology reader's struct offsets are covered by a test that reads
+      the machine it runs on, because wrong offsets would not throw — they would return
+      plausible masks and pin the miner to cores nobody chose
+- [x] **The restart helper's fix, watched on all three nodes.** The 1.14.0 rollout was the first
+      update to run the repaired helper, and every node came back on its own: `mks68i7rtx`
+      StartPending → Running by 20 s, the other two answering within 10. Before it, the same
+      operation had left `mks68i7rtx` down and needed `sc start` by hand
 - [x] **Rolled 1.13.2 across the whole fleet**, all three nodes, miners untouched:
       `mks68i7rtx` 1.13.1 → 1.13.2 (service lost the race again and was started by the rollout),
       `desktop-ib88isg` 1.13.0 → 1.13.2 and `re-7lqd67ahcm0r` 1.13.0 → 1.13.2 (both came back on
@@ -630,17 +642,10 @@ xmrig-fleet/
       across the restart, and the pushed pause rule survived the update on `mks68i7rtx`
 
 ### Implemented, Not Yet Verified Live ⏳
-- [ ] **`reservedCores` as a pushed setting.** The affinity itself is verified — it is what made
-      that node playable — but it was set by hand on the live process and dies with it.
-      `CpuReservationService` re-asserts it every five seconds so a miner restarted by anything at
-      all comes back reserved, and the topology reader is checked against real hardware by a test.
-      What has not been watched yet is the case the service exists for: a node rebooting and coming
-      up with the reservation already applied
-- [ ] **The restart helper's new delay.** The bug it fixes is verified twice over (see the list
-      above); the fix itself cannot be, because it acts only on the *next* self-update. The
-      rollout that installed 1.13.2 still ran 1.13.1's helper — and lost the race on
-      `mks68i7rtx`, won it on the other two, which is what a race looks like. The next update on
-      any of the three is the test
+- [ ] **A reserved core surviving a reboot.** Everything up to that is verified (see above): the
+      setting is stored on the node, and the service re-applies it within six seconds of the mask
+      being taken away. What nobody has watched is `mks68i7rtx` coming back from a cold boot with
+      the reservation already on the miner autostart started
 - [ ] **Whether a minute is the right bucket for the load journal.** The journal itself is
       verified (see above), but only over six minutes of an idle machine. Nobody has yet read a
       working day of it back and asked whether a per-minute peak catches what an operator
