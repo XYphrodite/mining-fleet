@@ -103,6 +103,21 @@ of the shaders at lower clocks. For a card the honest options are mining or not 
 1,039 XTM/day that is **≈3 ₽ per hour** of standing down — an evening's play costs about ten
 roubles, and the CPU miner keeps earning throughout.
 
+##### After the fix, same session, game still running
+
+Rule pushed as `{ tcpPort: 11434, processNames: ["dontstarve_steam_x64"], quietSeconds: 300 }`.
+The card stood down on the next tick — `/gpu` answered `dontstarve_steam_x64 is running` five
+seconds later.
+
+| | Mining through the game | Stood down |
+|---|---:|---:|
+| GPU utilisation | 100% | **18%** |
+| VRAM in use | 8,152 MB | **827 MB** |
+| Temperature | 66 °C | **46 °C** |
+
+The CPU miner was untouched across the whole exercise, including two agent restarts: same pid,
+7,100 H/s, huge pages 1180/1180.
+
 ### RX 6500 XT 4 GB — `desktop-ib88isg`
 
 | Algorithm | Pool | Rate | Income | Verdict |

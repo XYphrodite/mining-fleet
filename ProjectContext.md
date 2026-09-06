@@ -587,19 +587,41 @@ xmrig-fleet/
       JSON to a tenth. Priced through CoinGecko's `minotari` at 0.069066 ₽, that is ≈71.8 ₽/day the
       fleet had been earning invisibly
 
+- [x] **The card stands down for a game, watched live on `mks68i7rtx` on 2026-09-06.** The rule
+      had watched only TCP 11434 because `IsBusy` returned on the first condition it found and
+      never read the process name beside a port — so a node set to hand its card to a language
+      model mined straight through a game. Measured mid-freeze with Windows' per-process GPU
+      counters, which are the only per-process split there is (`nvidia-smi --query-compute-apps`
+      answers `[N/A]` for memory on this card): lolMiner held **97.6% of the 3D engine and
+      6,879 MB of an 8,188 MB card**, Don't Starve Together got **1.1% and 270 MB** — a quarter
+      of what it wants, so Windows was evicting its textures to system RAM. The CPU was not
+      involved and the node's own journal says so: `other avg=6.0–7.3%` across the same half-hour
+      on 32 GB. After pushing `{ tcpPort: 11434, processNames: ["dontstarve_steam_x64"] }` the
+      card stood down **within five seconds** — `/gpu` reported `dontstarve_steam_x64 is running`
+      — and the card went from 100% and 8,152 MB at 66 °C to **18% and 827 MB at 46 °C**. The CPU
+      miner was untouched throughout: same pid, 7,100 H/s, huge pages 1180/1180
+- [x] **A self-update can leave a node mining with no agent, and it did.** `ScheduleRestart` waited
+      with `timeout /t 5 /nobreak`, which refuses to run without a console on stdin — *"ERROR:
+      Input redirection is not supported, exiting the process immediately"* — and a service's child
+      process never has one. The five-second cushion never existed: `sc start` fired about a second
+      later, while the old process was still alive and the service still `RUNNING`, and lost with
+      error 1056. Every self-update was therefore a race. `mks68i7rtx` won it going to 1.12.0 and
+      lost it going to 1.13.1: files replaced, both miners still running, service `Stopped`, node
+      unmanageable until somebody ran `sc start` by hand. Reproduced off the node by running the
+      same command line with a redirected stdin — 1 s and an error, against 6.1 s for `ping`.
+      Fixed in 1.13.2 by delaying with `ping` and trying three times
+- [x] **Rolled 1.13.2 across the whole fleet**, all three nodes, miners untouched:
+      `mks68i7rtx` 1.13.1 → 1.13.2 (service lost the race again and was started by the rollout),
+      `desktop-ib88isg` 1.13.0 → 1.13.2 and `re-7lqd67ahcm0r` 1.13.0 → 1.13.2 (both came back on
+      their own inside ten seconds). Every xmrig kept its pid, its huge pages and its shares
+      across the restart, and the pushed pause rule survived the update on `mks68i7rtx`
+
 ### Implemented, Not Yet Verified Live ⏳
-- [ ] **A pause rule that watches more than one thing at a time.** `IsBusy` returned on the first
-      condition it found, so a rule naming both a port and a process watched only the port and
-      never looked at the name. `mks68i7rtx` was set to hand its card to a local model on 11434,
-      a game was started, and the node froze while the agent reported itself working correctly —
-      it was. Measured mid-freeze with Windows' own per-process GPU counters: lolMiner held
-      **97.6% of the 3D engine and 6,879 MB of an 8,188 MB card**; Don't Starve Together got
-      **1.1% and 270 MB**, roughly a quarter of what it needs, so its textures were being evicted
-      to system RAM. The CPU was not involved — the node's own journal reads `other avg=6.0–7.3%`
-      through the same half-hour. `Evaluate` is now pure and weighs every condition, `processNames`
-      takes a list, and the singular field is folded in for the nodes already carrying it. Unit
-      tested and built; no node has yet been pushed the new rule and watched to stand down for a
-      game
+- [ ] **The restart helper's new delay.** The bug it fixes is verified twice over (see the list
+      above); the fix itself cannot be, because it acts only on the *next* self-update. The
+      rollout that installed 1.13.2 still ran 1.13.1's helper — and lost the race on
+      `mks68i7rtx`, won it on the other two, which is what a race looks like. The next update on
+      any of the three is the test
 - [ ] **Whether a minute is the right bucket for the load journal.** The journal itself is
       verified (see above), but only over six minutes of an idle machine. Nobody has yet read a
       working day of it back and asked whether a per-minute peak catches what an operator
@@ -810,7 +832,7 @@ xmrig-fleet/
 
 **Document Version**: v1.2
 **Last Updated**: 2026-09-06
-**Product Version**: 1.13.1
+**Product Version**: 1.13.2
 **Status**: Active
 **Repository**: `c:\Repos\xmrig-fleet` (branch `master`), published at
 [github.com/XYphrodite/xmrig-fleet](https://github.com/XYphrodite/xmrig-fleet)
