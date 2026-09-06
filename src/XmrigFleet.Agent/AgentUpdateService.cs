@@ -136,10 +136,28 @@ public sealed class AgentUpdateService
         // that budget is only three deep and resets once a day, and every update spends one.
         // The fourth update within 24 hours therefore left a node down with no way back in
         // except a visit to the machine, which is exactly what this feature exists to avoid.
+        // The delay is `ping`, not `timeout`. A service's child process has no console on stdin,
+        // and `timeout` refuses to run without one - "ERROR: Input redirection is not supported,
+        // exiting the process immediately" - so the cushion this needs never existed. `sc start`
+        // ran about a second later instead of five, while this process was still alive and the
+        // service still RUNNING, and lost with error 1056. That made every self-update a race:
+        // mks68i7rtx came back from 1.12.0 and did not come back from 1.13.1, and sat there
+        // mining with no agent until somebody started the service by hand.
+        //
+        // Three attempts rather than one, because the right moment cannot be calculated from
+        // here: this process has to be gone and the service fully stopped, and how long that
+        // takes depends on what the miner and the sensors are doing as they shut down. A
+        // `sc start` against a service that is already running is a harmless 1056.
+        const string Wait = "ping -n {0} 127.0.0.1 > nul";
+        var start = $"sc start \"{ServiceName}\"";
+        var script = string.Join(" & ",
+            string.Format(Wait, 6), start,
+            string.Format(Wait, 11), start,
+            string.Format(Wait, 21), start);
+
         try
         {
-            using var helper = Process.Start(new ProcessStartInfo("cmd.exe",
-                $"/c timeout /t 5 /nobreak > nul & sc start \"{ServiceName}\"")
+            using var helper = Process.Start(new ProcessStartInfo("cmd.exe", $"/c {script}")
             {
                 CreateNoWindow = true,
                 UseShellExecute = false,
