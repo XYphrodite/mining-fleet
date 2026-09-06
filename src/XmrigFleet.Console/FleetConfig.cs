@@ -165,15 +165,17 @@ public sealed class FleetConfig
     /// </summary>
     private static GpuPauseRuleDto? PauseRuleFor(GpuPauseConfig? rule)
     {
-        if (rule is null || (rule.TcpPort is null && string.IsNullOrWhiteSpace(rule.ProcessName)))
-            return null;
+        if (rule is null) return null;
 
-        return new GpuPauseRuleDto
+        var resolved = new GpuPauseRuleDto
         {
             TcpPort = rule.TcpPort,
-            ProcessName = string.IsNullOrWhiteSpace(rule.ProcessName) ? null : rule.ProcessName,
+            ProcessName = string.IsNullOrWhiteSpace(rule.ProcessName) ? null : rule.ProcessName.Trim(),
+            ProcessNames = rule.ProcessNames is { Count: > 0 } ? rule.ProcessNames : null,
             QuietSeconds = rule.QuietSeconds,
         };
+
+        return resolved.NamesACondition ? resolved : null;
     }
 }
 
@@ -214,8 +216,11 @@ public sealed class GpuMinerConfig
 }
 
 /// <summary>
-/// When GPU mining stands down. Names a port or a process, not an application, because a local
+/// When GPU mining stands down. Names ports and processes, not applications, because a local
 /// model, a game and a render all want the card for the same reason.
+///
+/// Every condition named is watched and any one of them is enough, so a node can hand its card
+/// both to a model and to a game without the operator having to choose which matters more.
 /// </summary>
 public sealed class GpuPauseConfig
 {
@@ -224,6 +229,12 @@ public sealed class GpuPauseConfig
 
     /// <summary>Stand down while a process of this name runs. No extension.</summary>
     public string? ProcessName { get; set; }
+
+    /// <summary>
+    /// Stand down while any of these processes run. No extensions. Kept alongside the singular
+    /// field above, which older configs use and which is folded in rather than ignored.
+    /// </summary>
+    public List<string>? ProcessNames { get; set; }
 
     /// <summary>Seconds of quiet before mining resumes. Standing down is immediate.</summary>
     public int? QuietSeconds { get; set; }

@@ -171,11 +171,16 @@ public sealed class FleetService
             ? $"{settings.Algorithm ?? "no algorithm"} on {settings.PoolUrl ?? "no pool"}"
             : "off";
 
-        return settings.PauseWhile is { } pause && pause.TcpPort is not null
-            ? $"{what}, pausing while port {pause.TcpPort} is busy"
-            : settings.PauseWhile is { ProcessName: { } process }
-                ? $"{what}, pausing while {process} runs"
-                : what;
+        if (settings.PauseWhile is not { } pause || !pause.NamesACondition) return what;
+
+        // Every condition is named, not just the first: a node reported as "pausing while port
+        // 11434 is busy" while it also stands down for three games tells the operator less than
+        // nothing when one of those games is the one they are asking about.
+        var conditions = new List<string>();
+        if (pause.TcpPort is { } port) conditions.Add($"port {port} is busy");
+        conditions.AddRange(pause.Processes.Select(p => $"{p} runs"));
+
+        return $"{what}, pausing while {string.Join(" or ", conditions)}";
     }
 
     /// <summary>

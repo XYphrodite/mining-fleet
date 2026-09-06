@@ -60,7 +60,7 @@ public sealed class GpuPauseService : BackgroundService
         var config = _config.Current;
         var rule = config.GpuMiner?.PauseWhile;
 
-        if (rule is null || (rule.TcpPort is null && string.IsNullOrWhiteSpace(rule.ProcessName)))
+        if (rule is null || !rule.NamesACondition)
         {
             // The second half is not redundant, for the same reason it is not in the throttle: a
             // node whose miner this service paused, restarted into a config with no rule, would
@@ -150,38 +150,65 @@ public sealed class GpuPauseService : BackgroundService
     }
 
     /// <summary>
-    /// Whether the thing the rule watches is in use. Null means the observation could not be made
+    /// Whether anything the rule watches is in use. Null means the observation could not be made
     /// and the caller must hold its decision rather than read the silence as quiet.
+    ///
+    /// Every condition is evaluated and any one of them stands the card down. This used to return
+    /// on the first condition it found, which made a rule naming both a port and a process watch
+    /// only the port - so a node that gave its card to a language model went on mining through a
+    /// game, with a rule on disk that said otherwise.
     /// </summary>
     private (bool Busy, string Description)? IsBusy(GpuPauseRuleDto rule)
     {
         try
         {
-            if (rule.TcpPort is { } port)
-            {
-                // Read straight from the TCP table rather than through a cmdlet or WMI: measured on
-                // mks68i7rtx, Get-NetTCPConnection returns nothing at all from a service context.
-                //
-                // Matched on the local port across every address, deliberately not on loopback.
-                // Ollama binds the node's tailnet address, and a watchdog watching 127.0.0.1 sees
-                // nothing and reports a mining duty cycle of 100% forever.
-                var open = IPGlobalProperties.GetIPGlobalProperties()
-                    .GetActiveTcpConnections()
-                    .Count(c => c.LocalEndPoint.Port == port && c.State == TcpState.Established);
-
-                return open > 0
-                    ? (true, $"port {port} busy, {open} connection(s)")
-                    : (false, $"port {port} quiet");
-            }
-
-            var name = rule.ProcessName!;
-            var running = Process.GetProcessesByName(name).Length > 0;
-            return running ? (true, $"{name} is running") : (false, $"{name} is not running");
+            return GpuPauseRule.Evaluate(rule, OpenConnections(rule.TcpPort), RunningAmong(rule.Processes));
         }
         catch (Exception ex) when (ex is NetworkInformationException or InvalidOperationException or System.ComponentModel.Win32Exception)
         {
             _log.LogDebug(ex, "Could not read the pause condition");
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Established connections to the watched port, or zero when no port is watched.
+    ///
+    /// Read straight from the TCP table rather than through a cmdlet or WMI: measured on
+    /// mks68i7rtx, Get-NetTCPConnection returns nothing at all from a service context.
+    ///
+    /// Matched on the local port across every address, deliberately not on loopback. Ollama binds
+    /// the node's tailnet address, and a watchdog watching 127.0.0.1 sees nothing and reports a
+    /// mining duty cycle of 100% forever.
+    /// </summary>
+    private static int OpenConnections(int? port) =>
+        port is not { } watched
+            ? 0
+            : IPGlobalProperties.GetIPGlobalProperties()
+                .GetActiveTcpConnections()
+                .Count(c => c.LocalEndPoint.Port == watched && c.State == TcpState.Established);
+
+    /// <summary>
+    /// Which of the watched process names are running, from one snapshot of the process table.
+    ///
+    /// Taken once rather than per name because this runs every second: GetProcessesByName walks
+    /// every process on the machine for each call, so a rule naming four games would walk it four
+    /// times over to answer one question.
+    /// </summary>
+    private static IReadOnlyCollection<string> RunningAmong(IReadOnlyList<string> names)
+    {
+        if (names.Count == 0) return [];
+
+        var snapshot = Process.GetProcesses();
+        try
+        {
+            return names
+                .Where(name => snapshot.Any(p => string.Equals(p.ProcessName, name, StringComparison.OrdinalIgnoreCase)))
+                .ToArray();
+        }
+        finally
+        {
+            foreach (var process in snapshot) process.Dispose();
         }
     }
 }

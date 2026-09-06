@@ -63,11 +63,112 @@ public class GpuMiningTests
             GpuMiner = new GpuMinerSettingsDto { PauseWhile = new GpuPauseRuleDto { TcpPort = 11434 } },
         });
 
-        // The one place "null means leave alone" is wrong: a rule names a port or a process, and
-        // inheriting the other would stand the node down for two reasons when one was asked for.
+        // The one place "null means leave alone" is wrong. A push carries the node's whole rule,
+        // so a condition absent from it is one the operator removed - and inheriting it would
+        // leave the node standing down for a reason found in nobody's config.
         Assert.Equal(11434, saved.GpuMiner!.PauseWhile!.TcpPort);
         Assert.Null(saved.GpuMiner.PauseWhile.ProcessName);
         Assert.Equal(60, saved.GpuMiner.PauseWhile.QuietSeconds);
+    }
+
+    /// <summary>
+    /// The defect this pair exists for, and it cost real money before it was found: the node was
+    /// set to hand its card to a local model on port 11434, a game was started, and the miner went
+    /// on holding 97.6% of the 3D engine and 6,879 MB of an 8,188 MB card. The game got 1.1% and
+    /// 270 MB, and the machine froze.
+    ///
+    /// Nothing was misconfigured. The rule was read as "a port or a process", and the port won
+    /// before the process name was so much as looked at.
+    /// </summary>
+    [Fact]
+    public void A_process_stands_the_card_down_even_when_the_rule_also_watches_a_port()
+    {
+        var rule = new GpuPauseRuleDto { TcpPort = 11434, ProcessName = "dontstarve_steam_x64" };
+
+        var busy = GpuPauseRule.Evaluate(rule, portConnections: 0, runningProcesses: ["dontstarve_steam_x64"]);
+
+        Assert.True(busy.Busy);
+        Assert.Contains("dontstarve_steam_x64 is running", busy.Description);
+    }
+
+    [Fact]
+    public void A_quiet_rule_names_everything_it_was_watching()
+    {
+        var rule = new GpuPauseRuleDto { TcpPort = 11434, ProcessNames = ["dontstarve_steam_x64", "blender"] };
+
+        var quiet = GpuPauseRule.Evaluate(rule, portConnections: 0, runningProcesses: []);
+
+        // A node that is not pausing should say what it is not pausing for, the same way a missing
+        // sensor says why it is missing. "Quiet" alone cannot be checked against the config.
+        Assert.False(quiet.Busy);
+        Assert.Contains("port 11434", quiet.Description);
+        Assert.Contains("dontstarve_steam_x64", quiet.Description);
+        Assert.Contains("blender", quiet.Description);
+    }
+
+    [Fact]
+    public void Every_reason_the_card_is_wanted_is_reported_not_just_the_first()
+    {
+        var rule = new GpuPauseRuleDto { TcpPort = 11434, ProcessNames = ["blender"] };
+
+        var busy = GpuPauseRule.Evaluate(rule, portConnections: 2, runningProcesses: ["blender"]);
+
+        // Both, because the card comes back only when the last of them lets go: an operator told
+        // only about the port would restart the miner into a render still running.
+        Assert.True(busy.Busy);
+        Assert.Contains("port 11434 busy, 2 connection(s)", busy.Description);
+        Assert.Contains("blender is running", busy.Description);
+    }
+
+    [Fact]
+    public void The_singular_process_field_is_folded_in_beside_the_list()
+    {
+        // Every node already deployed has the singular field written into its miner.json, and an
+        // operator's fleet.json may have either. A field that quietly stops being read is how a
+        // rig ends up mining through a game with nothing anywhere to say why.
+        var rule = new GpuPauseRuleDto { ProcessName = "blender", ProcessNames = ["dontstarve_steam_x64", "BLENDER"] };
+
+        // Two conditions, not three: the same process named in both fields is one process. Which
+        // spelling survives is not asserted because it cannot matter - Windows matches process
+        // names without regard to case, and so does the rule.
+        Assert.Equal(2, rule.Processes.Count);
+        Assert.Contains("dontstarve_steam_x64", rule.Processes);
+        Assert.True(rule.NamesACondition);
+
+        Assert.True(GpuPauseRule.Evaluate(rule, 0, ["Blender"]).Busy);
+    }
+
+    [Fact]
+    public void A_rule_naming_several_games_is_pushed_whole()
+    {
+        var config = new FleetConfig
+        {
+            GpuMiner = new GpuMinerConfig
+            {
+                Enabled = true,
+                Algorithm = "CR29",
+                PoolUrl = "xtm-c29.kryptex.network:7040",
+                User = "address/rig",
+                PauseWhile = new GpuPauseConfig
+                {
+                    TcpPort = 11434,
+                    ProcessNames = ["dontstarve_steam_x64", "blender"],
+                    QuietSeconds = 300,
+                },
+            },
+        };
+
+        var resolved = config.GpuMinerFor(new NodeConfig { Name = "mks68i7rtx" });
+
+        Assert.Equal(11434, resolved.PauseWhile!.TcpPort);
+        Assert.Equal(["dontstarve_steam_x64", "blender"], resolved.PauseWhile.Processes);
+
+        // The operator reads this line back to check what a node was actually left set to, so it
+        // has to name every condition rather than whichever one happens to be looked at first.
+        var described = FleetService.DescribeGpuSettings(resolved);
+        Assert.Contains("port 11434 is busy", described);
+        Assert.Contains("dontstarve_steam_x64 runs", described);
+        Assert.Contains("blender runs", described);
     }
 
     [Fact]

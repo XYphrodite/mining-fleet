@@ -1,3 +1,5 @@
+using XmrigFleet.Contracts;
+
 namespace XmrigFleet.Agent;
 
 /// <summary>
@@ -67,6 +69,46 @@ public sealed class GpuPauseRule
         _quietSince = null;
         Set(false, $"resumed after {quietSeconds}s of quiet", now);
         return true;
+    }
+
+    /// <summary>
+    /// Reduces a rule and the observations behind it to a yes or no, and to the words the console
+    /// shows for it. Pure, so the part that decides can be tested without a card, a socket or a
+    /// process table - the caller does the observing.
+    ///
+    /// Every condition is weighed and any one of them is enough. The service this came out of
+    /// returned on the first condition it found, so a rule naming both a port and a process
+    /// watched only the port: a node set to hand its card to a language model went on mining
+    /// through a game, with a rule on disk that plainly said otherwise. Measured while it did:
+    /// lolMiner held 97.6% of the 3D engine and 6,879 MB of an 8,188 MB card, and the game got
+    /// 1.1% and 270 MB.
+    /// </summary>
+    /// <param name="portConnections">Established connections to the watched port; 0 when none is watched.</param>
+    /// <param name="runningProcesses">Which of the watched process names the caller found running.</param>
+    public static (bool Busy, string Description) Evaluate(
+        GpuPauseRuleDto rule, int portConnections, IReadOnlyCollection<string> runningProcesses)
+    {
+        var busy = new List<string>();
+        var watched = new List<string>();
+
+        if (rule.TcpPort is { } port)
+        {
+            watched.Add($"port {port}");
+            if (portConnections > 0) busy.Add($"port {port} busy, {portConnections} connection(s)");
+        }
+
+        foreach (var name in rule.Processes)
+        {
+            watched.Add(name);
+            if (runningProcesses.Contains(name, StringComparer.OrdinalIgnoreCase))
+                busy.Add($"{name} is running");
+        }
+
+        if (busy.Count > 0) return (true, string.Join("; ", busy));
+
+        // Naming what was watched rather than saying "quiet" is the same rule HardwareDto follows
+        // for a missing sensor: a node that is not pausing should say what it is not pausing for.
+        return (false, watched.Count == 0 ? "nothing to watch" : $"{string.Join(" and ", watched)} quiet");
     }
 
     /// <summary>

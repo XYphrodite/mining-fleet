@@ -71,6 +71,38 @@ taken under a hand-built scheduled task instead, which is worth knowing when com
 Cuckaroo29 benchmarked at **4.53 g/s** with no pool attached, against a third-party reference of
 4.07 g/s — this card runs above spec.
 
+#### What the miner leaves for everything else — 2026-09-06, 02:56
+
+Taken while the operator reported the node freezing during a game, from Windows'
+`\GPU Engine(*)\Utilization Percentage` and `\GPU Process Memory(*)\Dedicated Usage`, which are
+the only per-process split available — `nvidia-smi --query-compute-apps` returns `[N/A]` for
+memory on this consumer card, and the agent reports the GPU as one number per sensor.
+
+| Process | 3D engine | Dedicated VRAM |
+|---------|----------:|---------------:|
+| lolMiner (CR29) | **97.6%** | **6,879 MB** |
+| Don't Starve Together | **1.1%** | **270 MB** |
+| dwm + explorer + Steam + browsers | ~0% | ~450 MB |
+| **card total** | 100% | **8,152 of 8,188 MB** |
+
+The card was full. DST at 270 MB is roughly a quarter of what it wants, so Windows was evicting
+its textures to system memory — which is the stutter, rather than any shortage of frames.
+
+The CPU was not involved and the node's own journal says so: `other avg=6.0–7.3%, peak ≤33.5%
+(6.7 of 20 threads), miner=59.4%, mem=32%` across the whole half-hour, on 32 GB of RAM. **The
+freeze was the card alone.**
+
+Two things follow, and only one of them was a setting. The rule on the node watched TCP 11434
+(Ollama), which a game never touches — but it would not have helped to name the game either,
+because `IsBusy` returned on the first condition it found and never read the process name beside
+a port. Fixed in 1.13.1; see `GpuPauseRule.Evaluate`.
+
+The other is that **no partial measure would have worked**. Cuckaroo29 allocates its ~6.9 GB once
+and holds it at any intensity, and a power limit (`nvidia-smi -pl`) leaves the miner owning 97.6%
+of the shaders at lower clocks. For a card the honest options are mining or not mining. At
+1,039 XTM/day that is **≈3 ₽ per hour** of standing down — an evening's play costs about ten
+roubles, and the CPU miner keeps earning throughout.
+
 ### RX 6500 XT 4 GB — `desktop-ib88isg`
 
 | Algorithm | Pool | Rate | Income | Verdict |

@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace XmrigFleet.Contracts;
 
 /// <summary>Contract version, sent by the agent so the console can warn about mismatches.</summary>
@@ -234,10 +236,15 @@ public sealed record GpuMinerSettingsDto
 }
 
 /// <summary>
-/// The condition under which GPU mining stands down, and how long it waits before returning.
+/// The conditions under which GPU mining stands down, and how long it waits before returning.
 ///
-/// Deliberately expressed as a port or a process rather than as "Ollama", which is only the case
+/// Deliberately expressed as ports and processes rather than as "Ollama", which is only the case
 /// that prompted it. A local model, a game and a render all want the same thing from the miner.
+///
+/// Every condition named is watched, and any one of them is enough: a node that hands the card to
+/// a language model must not thereby stop handing it to a game. The rule was once one condition
+/// or the other, which read as a choice and behaved as a silent one - a rule naming a port never
+/// looked at its own process name at all.
 /// </summary>
 public sealed record GpuPauseRuleDto
 {
@@ -251,8 +258,23 @@ public sealed record GpuPauseRuleDto
     /// </summary>
     public int? TcpPort { get; init; }
 
-    /// <summary>Stand down while a process of this name is running. No extension, as Windows reports it.</summary>
+    /// <summary>
+    /// Stand down while a process of this name is running. No extension, as Windows reports it.
+    ///
+    /// Kept beside <see cref="ProcessNames"/> rather than replaced by it because it is already
+    /// written into nodes' miner.json and operators' fleet.json, and a field that quietly stops
+    /// being read is how a rig ends up mining through a game with nothing to say why.
+    /// </summary>
     public string? ProcessName { get; init; }
+
+    /// <summary>
+    /// Stand down while any process on this list is running. No extensions, as Windows reports
+    /// the names.
+    ///
+    /// A list because "somebody is using this card" is inherently plural: today's game is not
+    /// tomorrow's, and naming one at a time means editing a node's config per title.
+    /// </summary>
+    public IReadOnlyList<string>? ProcessNames { get; init; }
 
     /// <summary>
     /// Seconds of quiet before mining resumes. Standing down is immediate.
@@ -262,6 +284,27 @@ public sealed record GpuPauseRuleDto
     /// wastes the restart and slows the next answer.
     /// </summary>
     public int? QuietSeconds { get; init; }
+
+    /// <summary>
+    /// Every process this rule watches, with the singular field folded in, blanks dropped and
+    /// duplicates removed. Computed in the contract so the agent that reads the rule and the
+    /// console that writes it cannot disagree about what a rule containing both fields means.
+    /// </summary>
+    [JsonIgnore]
+    public IReadOnlyList<string> Processes =>
+        (ProcessNames ?? [])
+            .Append(ProcessName)
+            .Where(n => !string.IsNullOrWhiteSpace(n))
+            .Select(n => n!.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+    /// <summary>
+    /// Whether the rule has anything at all to watch. A rule with only a quiet time in it would
+    /// stand a node down with nothing able to wake it, so both sides check before storing one.
+    /// </summary>
+    [JsonIgnore]
+    public bool NamesACondition => TcpPort is not null || Processes.Count > 0;
 }
 
 /// <summary>What the GPU miner is doing right now, so an idle card is never a mystery.</summary>
