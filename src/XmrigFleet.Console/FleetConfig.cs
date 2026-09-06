@@ -34,6 +34,12 @@ public sealed class FleetConfig
     public ThrottleConfig Throttle { get; set; } = new();
 
     /// <summary>
+    /// Physical cores every node holds back for whoever is sitting at it. Usually left at 0 and
+    /// answered per node instead; see <see cref="ReservedCoresFor"/>.
+    /// </summary>
+    public int? ReservedCores { get; set; }
+
+    /// <summary>
     /// Fleet-wide GPU mining defaults. Mostly a place to keep the pause rule and the pool login;
     /// the algorithm usually belongs on the node, because it is a property of the card.
     /// </summary>
@@ -127,6 +133,15 @@ public sealed class FleetConfig
             RampUpSeconds = own?.RampUpSeconds ?? Throttle.RampUpSeconds,
         };
     }
+
+    /// <summary>
+    /// How many physical cores a node holds back for whoever is sitting at it.
+    ///
+    /// Almost always a per-node answer rather than a fleet one, and more so than the algorithm is:
+    /// a rig in a cupboard reserves nothing, and the machine somebody games on reserves two. A
+    /// fleet-wide default exists only so a fleet of workstations can say it once.
+    /// </summary>
+    public int ReservedCoresFor(NodeConfig node) => node.ReservedCores ?? ReservedCores ?? 0;
 
     /// <summary>
     /// What a node's graphics card should mine: the fleet's answer with that node's exceptions
@@ -300,6 +315,15 @@ public sealed class NodeConfig
     /// headless one want different answers, and the Xeon's 16 GB wants a different one again.
     /// </summary>
     public ThrottleConfig? Throttle { get; set; }
+
+    /// <summary>
+    /// Physical cores this machine holds back from the miner for the person using it.
+    ///
+    /// Set on the node rather than the fleet because it answers a question about the room the
+    /// machine is in. Two cores cost 7% of `mks68i7rtx`'s hashrate and made a game playable; the
+    /// same two on a rig nobody touches would be 7% given away for nothing.
+    /// </summary>
+    public int? ReservedCores { get; set; }
 
     /// <summary>
     /// This machine's graphics card settings. Usually where the algorithm actually lives: an

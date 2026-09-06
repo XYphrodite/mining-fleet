@@ -151,6 +151,20 @@ public sealed record MinerConfigDto
     public ThrottleSettingsDto? Throttle { get; init; }
 
     /// <summary>
+    /// Physical cores kept out of the miner's hands for whoever is sitting at the machine.
+    ///
+    /// Unlike the throttle this is not a response to load, and deliberately so: the load a person
+    /// generates is the thing being suppressed. Measured on `mks68i7rtx` while a game froze — the
+    /// miner held one thread of every P-core and all four E-cores, and the node's own journal read
+    /// `other avg=8.4%`, because the game could not get scheduled enough to consume more. A ladder
+    /// watching that figure would never have moved.
+    ///
+    /// 0 or null reserves nothing, which is right for a rig nobody sits at. Two cores cost 7% of
+    /// the hashrate on that node and stopped the stutter.
+    /// </summary>
+    public int? ReservedCores { get; init; }
+
+    /// <summary>
     /// True when the miner is stopped because the throttle took it to zero, rather than because
     /// an operator stopped it.
     ///

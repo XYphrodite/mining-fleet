@@ -118,6 +118,7 @@ public sealed class MinerConfigStore
                 KeepMonitorOpen = patch.KeepMonitorOpen ?? _current.KeepMonitorOpen,
                 AutoStartMiner = patch.AutoStartMiner ?? _current.AutoStartMiner,
                 Throttle = MergeThrottle(_current.Throttle, patch.Throttle),
+                ReservedCores = patch.ReservedCores ?? _current.ReservedCores,
                 MinerStoppedByThrottle = patch.MinerStoppedByThrottle ?? _current.MinerStoppedByThrottle,
                 GpuMiner = MergeGpuMiner(_current.GpuMiner, patch.GpuMiner),
                 GpuStoppedByPause = patch.GpuStoppedByPause ?? _current.GpuStoppedByPause,

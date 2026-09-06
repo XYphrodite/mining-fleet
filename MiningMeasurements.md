@@ -103,6 +103,37 @@ of the shaders at lower clocks. For a card the honest options are mining or not 
 1,039 XTM/day that is **≈3 ₽ per hour** of standing down — an evening's play costs about ten
 roubles, and the CPU miner keeps earning throughout.
 
+##### The card was only half of it — 2026-09-06, 16:19
+
+With the miner standing down for the game and the card at 20% / 849 MB / 40 °C, the node still
+stuttered. The per-core split named the other half:
+
+```
+100 2 100 1 100 26 100 21 100 50 100 59 100 8 100 4 | 100 100 100 100
+└──────── one thread of each of 8 P-cores ────────┘  └─ all 4 E-cores ─┘
+```
+
+Twelve RandomX threads at thread priority `Highest` inside a `High` process, on all 20 logical
+CPUs. The game was left hyperthread siblings of saturated cores and nothing else, and its 24 MB of
+RandomX scratchpad filled a 25 MB L3. The journal read `other avg=8.4%` throughout — a process that
+cannot get scheduled cannot register load, which is exactly why a load-driven ladder was never
+going to see this.
+
+Both levers measured on the live miner, no restart, huge pages 1180/1180 the whole time:
+
+| Miner state | Hashrate | Where it ran |
+|---|---:|---|
+| `High`, all 20 logical CPUs | 7,126 H/s | 8 P-threads + 4 E-cores |
+| **`BelowNormal`** | **1,058 H/s** | **the 4 E-cores only** |
+| `Normal`, two P-cores freed by affinity | **6,642 H/s** | 16 of 20 logical |
+
+**`BelowNormal` costs 85% on Alder Lake.** Windows 11 reads a below-normal process as background
+work and parks it on the efficiency cores; the P-cores sat idle. It is not a dial.
+
+**Affinity costs 7%** and was what the operator confirmed as fixing the game. Nothing is frozen and
+nothing is demoted — the miner simply runs on fewer CPUs — which is why it does not pay the
+cache-eviction toll a job-object cap does (rung 50 keeps 27.6%, measured earlier on this fleet).
+
 ##### After the fix, same session, game still running
 
 Rule pushed as `{ tcpPort: 11434, processNames: ["dontstarve_steam_x64"], quietSeconds: 300 }`.
