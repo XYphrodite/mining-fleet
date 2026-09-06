@@ -168,6 +168,8 @@ hardware.
 | `ThrottleService` | Holds the miner back while somebody is using the machine: reads the ladder every second, caps or stops the miner, records every decision |
 | `ThrottleLadder` | The rung rule itself — pure, clock-injected, and the part the tests drive |
 | `MinerCpuLimit` | The CPU cap, a named job object so an agent restart can still lift its own limit |
+| `CpuReservation` | Which logical CPUs the miner may use when whole cores are held back for the person at the machine. Reads the real topology through `GetLogicalProcessorInformationEx`, because "two logical per core" is wrong on a hybrid CPU — an i7-12700KF reports 12 cores and 20 logical processors, and four of those cores have one thread each |
+| `CpuReservationService` | Keeps that mask applied. A background loop rather than something done at start-up: affinity dies with the process, so a miner restarted by the throttle, by an operator or by autostart after a reboot comes back holding the whole machine |
 | `SystemLoadReader` | `GetSystemTimes` + `GlobalMemoryStatusEx`, with the miner's own CPU time subtracted |
 | `ThrottleLog` | `throttle.log` beside the binary: one line a minute of what the CPU was doing, plus every rung change with the readings behind it |
 | `LoadJournal` | Folds the once-a-second samples into that per-minute line. Runs whether or not throttling is on, which is the point: throttling ships off, so a node used to keep no record of its own load at all |
@@ -297,6 +299,7 @@ All routes live under `/api/v1` and require the `X-Fleet-Token` header.
       "enabled": true, "powerFallbackWatts": 220 },
     { "name": "rig-2", "host": "100.100.10.12", "port": 47800,
       "enabled": true, "powerFallbackWatts": 310, "pricePerKwh": 7.2,
+      "reservedCores": 2,
       "throttle": { "enabled": true, "floorLevel": 25 },
       "gpuMinerPath": "C:\\mining\\lolMiner",
       "gpuMiner": { "enabled": true, "algorithm": "CR29",
@@ -600,6 +603,16 @@ xmrig-fleet/
       card stood down **within five seconds** — `/gpu` reported `dontstarve_steam_x64 is running`
       — and the card went from 100% and 8,152 MB at 66 °C to **18% and 827 MB at 46 °C**. The CPU
       miner was untouched throughout: same pid, 7,100 H/s, huge pages 1180/1180
+- [x] **The freeze was the CPU too, and reserving whole cores fixed it.** With the card already
+      standing down for the game, `mks68i7rtx` still stuttered. The per-core split said why:
+      `100 2 100 1 100 26 100 21 100 50 100 59 100 8 100 4 | 100 100 100 100` — the miner held one
+      thread of every P-core and all four E-cores, at thread priority `Highest` inside a `High`
+      process, leaving the game only hyperthread siblings of saturated RandomX cores. The journal
+      still read `other avg=8.4%`, because a process that cannot get scheduled cannot register
+      load; a ladder watching that figure would never have moved. Two levers were measured on the
+      live miner without restarting it: **`BelowNormal` cost 85%** (7,126 → 1,058 H/s, Windows
+      parking it on the E-cores), while **freeing two P-cores by affinity cost 7%** (7,126 → 6,642)
+      and the operator confirmed the stutter gone. Huge pages stayed at 1180/1180 throughout
 - [x] **A self-update can leave a node mining with no agent, and it did.** `ScheduleRestart` waited
       with `timeout /t 5 /nobreak`, which refuses to run without a console on stdin — *"ERROR:
       Input redirection is not supported, exiting the process immediately"* — and a service's child
@@ -617,6 +630,12 @@ xmrig-fleet/
       across the restart, and the pushed pause rule survived the update on `mks68i7rtx`
 
 ### Implemented, Not Yet Verified Live ⏳
+- [ ] **`reservedCores` as a pushed setting.** The affinity itself is verified — it is what made
+      that node playable — but it was set by hand on the live process and dies with it.
+      `CpuReservationService` re-asserts it every five seconds so a miner restarted by anything at
+      all comes back reserved, and the topology reader is checked against real hardware by a test.
+      What has not been watched yet is the case the service exists for: a node rebooting and coming
+      up with the reservation already applied
 - [ ] **The restart helper's new delay.** The bug it fixes is verified twice over (see the list
       above); the fix itself cannot be, because it acts only on the *next* self-update. The
       rollout that installed 1.13.2 still ran 1.13.1's helper — and lost the race on
@@ -691,6 +710,16 @@ xmrig-fleet/
       runs over names — what has been checked live is `/info`, not a full `status` fan-out
 
 ### Known Issues / Risks ⚠️
+- **Lowering the miner's priority is a switch, not a dial, on a hybrid CPU.** Dropped to
+  `BelowNormal` on `mks68i7rtx` (i7-12700KF), Windows 11 read the miner as background work and
+  parked it on the four E-cores: **7,126 H/s became 1,058**, an 85% loss, with the eight P-cores
+  sitting idle. Priority is therefore not a lever this project offers, and `CpuReservation` says
+  so where somebody would otherwise reach for it. The related trap is already recorded above: a
+  job-object cap keeps 27.6% of the hashrate at rung 50, because freezing threads costs RandomX
+  its scratchpad. Affinity is the one lever that does neither — freeing two cores cost 7%.
+- **A reserved core is reserved from the miner, not for anybody in particular.** Nothing stops
+  another program taking it, and nothing pins the game to it; the machine simply has two cores
+  the miner cannot touch. That is enough on a desktop and would not be on a busy server.
 - **Nothing in the fleet can see GPU contention, so a pause rule has to be told what to watch.**
   The agent reports the card's temperature, load and VRAM as one number each; it cannot say who
   is using them. That is why the rule names ports and processes at all — and why it is only ever
@@ -832,7 +861,7 @@ xmrig-fleet/
 
 **Document Version**: v1.2
 **Last Updated**: 2026-09-06
-**Product Version**: 1.13.2
+**Product Version**: 1.14.0
 **Status**: Active
 **Repository**: `c:\Repos\xmrig-fleet` (branch `master`), published at
 [github.com/XYphrodite/xmrig-fleet](https://github.com/XYphrodite/xmrig-fleet)

@@ -126,14 +126,29 @@ public sealed class FleetService
                 ClearManualLevel = clearManual ? true : null,
             };
 
-            var saved = await client.PutConfigAsync(new MinerConfigDto { Throttle = settings }, token);
+            // The reserved cores ride along with the throttle: both answer "how should this miner
+            // behave around the person at the machine", and an operator who syncs one and not the
+            // other would find a node half-configured with nothing saying which half.
+            var reserved = _config.ReservedCoresFor(node);
+            var saved = await client.PutConfigAsync(
+                new MinerConfigDto { Throttle = settings, ReservedCores = reserved }, token);
             if (saved is null) return CommandResultDto.Failure("empty response");
 
             var applied = saved.Throttle;
             if (applied is null)
                 return CommandResultDto.Failure("this agent is too old to throttle; run upgrade-agents");
 
-            return CommandResultDto.Success(Describe(applied));
+            // Read back rather than echoed, like every other setting: an agent too old to reserve
+            // cores drops the field, and reporting the request would call that a success.
+            var cores = saved.ReservedCores ?? 0;
+            var note = reserved switch
+            {
+                0 when cores == 0 => "",
+                _ when cores == reserved => $", {cores} core(s) reserved",
+                _ => $", but this agent did not take the core reservation; run upgrade-agents",
+            };
+
+            return CommandResultDto.Success(Describe(applied) + note);
         }, ct);
 
     /// <summary>
