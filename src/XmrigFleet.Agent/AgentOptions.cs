@@ -195,20 +195,25 @@ public sealed class MinerConfigStore
     }
 
     /// <summary>
-    /// Folds the pause rule. A rule names either a port or a process, so a patch that names one
-    /// must not inherit the other from what was there before - that would leave a node standing
-    /// down for two reasons when the operator asked for one.
+    /// Folds the pause rule. A patch that names any condition replaces the whole set of them,
+    /// rather than adding to what was there before.
+    ///
+    /// This is the one place "null means leave alone" is wrong. The console always resolves and
+    /// sends a node's complete rule, so a condition missing from a push is one the operator has
+    /// removed - and inheriting it would leave a node standing down for a reason nobody could
+    /// find in any config. A patch naming no condition at all still leaves the rule alone, which
+    /// is what a pool-settings push sends.
     /// </summary>
     private static GpuPauseRuleDto? MergePauseRule(GpuPauseRuleDto? current, GpuPauseRuleDto? patch)
     {
         if (patch is null) return current;
         if (current is null) return patch;
 
-        var namesACondition = patch.TcpPort is not null || patch.ProcessName is not null;
         return new GpuPauseRuleDto
         {
-            TcpPort = namesACondition ? patch.TcpPort : current.TcpPort,
-            ProcessName = namesACondition ? patch.ProcessName : current.ProcessName,
+            TcpPort = patch.NamesACondition ? patch.TcpPort : current.TcpPort,
+            ProcessName = patch.NamesACondition ? patch.ProcessName : current.ProcessName,
+            ProcessNames = patch.NamesACondition ? patch.ProcessNames : current.ProcessNames,
             QuietSeconds = patch.QuietSeconds ?? current.QuietSeconds,
         };
     }

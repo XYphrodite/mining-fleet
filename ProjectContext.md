@@ -131,9 +131,10 @@ API enabled, so hashrate never has to be scraped from stdout.
    a renamed field blanks one cell instead of breaking a screen.
 8. **A graphics card belongs to whoever is at the machine.** The CPU can be throttled down a
    rung; a card cannot be shared at all, so GPU mining stands aside entirely and instantly when
-   something else wants it, and only comes back after a long quiet period. The rule names a port
-   or a process rather than an application, because a local model, a game and a render all want
-   the card for the same reason.
+   something else wants it, and only comes back after a long quiet period. The rule names ports
+   and processes rather than applications, because a local model, a game and a render all want
+   the card for the same reason. Any one condition is enough to stand the card down: a node that
+   hands its card to a model must not thereby stop handing it to a game.
 
 ---
 
@@ -172,8 +173,8 @@ hardware.
 | `LoadJournal` | Folds the once-a-second samples into that per-minute line. Runs whether or not throttling is on, which is the point: throttling ships off, so a node used to keep no record of its own load at all |
 | `MinerConfigStore` | Durable per-node miner settings |
 | `GpuMinerService` | Start/stop/restart lolMiner, read its loopback API, keep the last 200 output lines. A separate class from `MinerService` on purpose: it runs at Normal priority (Task Scheduler's default of 7 cost 18% of shares to staleness), it never touches an `xmrig` process, and it settles for five seconds rather than 700 ms because a card that will not mine fails quietly |
-| `GpuPauseService` | Stands the card's miner down while a named port has a live connection or a named process runs, and brings it back after the quiet period. Reads the TCP table through `IPGlobalProperties` — `Get-NetTCPConnection` sees nothing from a service |
-| `GpuPauseRule` | The stand-down rule itself, pure and clock-injected, and the part the tests drive |
+| `GpuPauseService` | Makes the observations the stand-down rule needs and acts on its answer. Reads the TCP table through `IPGlobalProperties` — `Get-NetTCPConnection` sees nothing from a service — and takes one snapshot of the process table per tick rather than one per watched name |
+| `GpuPauseRule` | The stand-down rule itself, pure and clock-injected, and the part the tests drive. Both halves are here: which conditions are met (`Evaluate`) and how long the card waits before coming back |
 
 ### 2. **XmrigFleet.Console**
 **Type**: Console application -> `xmrig-fleet.exe`
@@ -222,7 +223,7 @@ chasing coverage.
 | `UpdateAssetTests` | `update` matches the console asset and never the agent one that sits beside it in the same release |
 | `TailnetDiscoveryTests` | Discovery stores the MagicDNS name only when it resolves here, falls back to the address when it does not or when the tailnet has MagicDNS off, and skips a machine with no tailnet address |
 | `AutoStartTests` | An autostart push keeps the tuned ladder and the rest of the node's config; the setting survives an agent restart; the node's own answer beats the installed default while an untold node still follows it; autostart does not restart a miner the throttle stopped; and "unset" reads differently from "off" |
-| `GpuMiningTests` | A push that turns the card on keeps the lolMiner path and the session flag the node already knew; a pause rule naming a port replaces one naming a process rather than merging into a rule matching both; a node override replaces only what it names; and the stand-down is immediate while the return waits out the quiet period, restarted by any interruption |
+| `GpuMiningTests` | A push that turns the card on keeps the lolMiner path and the session flag the node already knew; a push replaces the whole set of pause conditions rather than inheriting one nobody asked for; a node override replaces only what it names; and the stand-down is immediate while the return waits out the quiet period, restarted by any interruption. Since 1.13.1 also: a named process stands the card down even when the rule watches a port too — the defect that let a game freeze `mks68i7rtx` — every reason is reported rather than the first, a quiet rule names what it was watching, and the singular process field is folded in beside the list |
 | `LoadJournalTests` | A minute closes once and only when the next one starts; a peak survives an average that hides it; an unusable sample is counted rather than averaged in as an idle machine; a minute nobody could measure still produces a line; throttling off reads differently from a rung of 0%; a gap does not merge two minutes; and memory survives a sample whose CPU delta did not |
 | `GpuPoolTests` | The pool and coin slug are read out of the stratum host and the worker name is not mistaken for part of the address; a pool this console cannot read is declined rather than guessed at, because a wrong address answers with somebody else's zero instead of an error; the daily rate is measured over the window the payouts cover, is refused on a single payout, and reads a long history over its last day only |
 | `MenuNavigationTests` | Arrows wrap in both directions; Escape answers with the menu's own way out and never with one of a two-answer menu's answers; the node picker backs out to null and the multi-picker to an empty list rather than the whole fleet; and a menu cannot be built with a cancel value it does not offer |
@@ -288,7 +289,8 @@ All routes live under `/api/v1` and require the `X-Fleet-Token` header.
   },
   "gpuMiner": {
     "enabled": false,
-    "pauseWhile": { "tcpPort": 11434, "quietSeconds": 300 }
+    "pauseWhile": { "tcpPort": 11434, "processNames": ["dontstarve_steam_x64"],
+                    "quietSeconds": 300 }
   },
   "nodes": [
     { "name": "rig-1", "host": "100.100.10.11", "port": 47800,
@@ -320,11 +322,14 @@ answer. `user` is stored whole, exactly as the pool wants it — `XMR:address.wo
 unMineable, `address/worker` for Kryptex — because no two pools agree on the shape and a console
 that assembled it would be wrong somewhere.
 
-`pauseWhile` names a **port or a process**, not an application. A local model, a game and a render
-all want the card for the same reason, and the miner has no business telling them apart. Standing
-down is immediate; coming back waits out `quietSeconds`, which defaults to five minutes because a
-model stays resident in VRAM between requests and a miner returning after ten seconds evicts it —
-the next question then waits for a reload instead of being answered.
+`pauseWhile` names **ports and processes**, not applications. A local model, a game and a render
+all want the card for the same reason, and the miner has no business telling them apart. Every
+condition named is watched and any one of them is enough; the card comes back only once the last
+of them lets go. `processNames` takes a list, and the older singular `processName` is folded in
+beside it rather than ignored, because every node already deployed has it written into its own
+`miner.json`. Standing down is immediate; coming back waits out `quietSeconds`, which defaults to
+five minutes because a model stays resident in VRAM between requests and a miner returning after
+ten seconds evicts it — the next question then waits for a reload instead of being answered.
 
 ### Agent — `appsettings.json`
 
@@ -583,6 +588,18 @@ xmrig-fleet/
       fleet had been earning invisibly
 
 ### Implemented, Not Yet Verified Live ⏳
+- [ ] **A pause rule that watches more than one thing at a time.** `IsBusy` returned on the first
+      condition it found, so a rule naming both a port and a process watched only the port and
+      never looked at the name. `mks68i7rtx` was set to hand its card to a local model on 11434,
+      a game was started, and the node froze while the agent reported itself working correctly —
+      it was. Measured mid-freeze with Windows' own per-process GPU counters: lolMiner held
+      **97.6% of the 3D engine and 6,879 MB of an 8,188 MB card**; Don't Starve Together got
+      **1.1% and 270 MB**, roughly a quarter of what it needs, so its textures were being evicted
+      to system RAM. The CPU was not involved — the node's own journal reads `other avg=6.0–7.3%`
+      through the same half-hour. `Evaluate` is now pure and weighs every condition, `processNames`
+      takes a list, and the singular field is folded in for the nodes already carrying it. Unit
+      tested and built; no node has yet been pushed the new rule and watched to stand down for a
+      game
 - [ ] **Whether a minute is the right bucket for the load journal.** The journal itself is
       verified (see above), but only over six minutes of an idle machine. Nobody has yet read a
       working day of it back and asked whether a per-minute peak catches what an operator
@@ -652,6 +669,16 @@ xmrig-fleet/
       runs over names — what has been checked live is `/info`, not a full `status` fan-out
 
 ### Known Issues / Risks ⚠️
+- **Nothing in the fleet can see GPU contention, so a pause rule has to be told what to watch.**
+  The agent reports the card's temperature, load and VRAM as one number each; it cannot say who
+  is using them. That is why the rule names ports and processes at all — and why it is only ever
+  as complete as the list an operator remembers to write. The measurement that found the freeze
+  on `mks68i7rtx` came from Windows' `\GPU Engine(*)\Utilization Percentage` and
+  `\GPU Process Memory(*)\Dedicated Usage` counters, run by hand over SSH, which give exactly the
+  per-process split the agent lacks. Reading them from the agent would let the rule notice *any*
+  program wanting the card instead of the named ones — the honest generalisation — but the
+  counters have not been read from session 0 here, and this project has already been caught once
+  by an API that returns nothing from a service context (`Get-NetTCPConnection`).
 - **GPU mining cannot start in a node's logged-on session**, and `GpuMinerService` refuses
   `RunInInteractiveSession` with a message saying so rather than reporting a start that never
   happens. As of 2026-09-04 no node is known to need it: `mks68i7rtx` was the reason the setting
@@ -782,8 +809,8 @@ xmrig-fleet/
 ## Document Information
 
 **Document Version**: v1.2
-**Last Updated**: 2026-09-05
-**Product Version**: 1.13.0
+**Last Updated**: 2026-09-06
+**Product Version**: 1.13.1
 **Status**: Active
 **Repository**: `c:\Repos\xmrig-fleet` (branch `master`), published at
 [github.com/XYphrodite/xmrig-fleet](https://github.com/XYphrodite/xmrig-fleet)
