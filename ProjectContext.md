@@ -725,6 +725,16 @@ xmrig-fleet/
 - **A reserved core is reserved from the miner, not for anybody in particular.** Nothing stops
   another program taking it, and nothing pins the game to it; the machine simply has two cores
   the miner cannot touch. That is enough on a desktop and would not be on a busy server.
+- **`reservedCores` is static, and on an idle machine that is a bad trade.** Measured on
+  `mks68i7rtx` with the game closed and the card mining in both arms: two reserved cores cost
+  **15% of the hashrate** (7,549 → 6,418 H/s), not the 7% measured while the game was running.
+  Worse, they run the CPU *hotter where it counts* — the package pinned to 99.5 °C against
+  95.3 °C, while the mean core temperature was 1.4 °C lower. That is a hotspot: twelve RandomX
+  threads on ten physical cores means two P-cores carry both hyperthreads, and the per-core read
+  showed the two reserved cores as the coolest on the die (75 and 79 °C) beside a P-core at 100 °C
+  with `Distance to TjMax = 0`. The setting should hold cores back only while somebody is at the
+  machine — the same shape as the GPU pause rule — and until it does, a node with a reservation
+  gives that up around the clock. Set back to 0 on that node on 2026-09-07.
 - **Nothing in the fleet can see GPU contention, so a pause rule has to be told what to watch.**
   The agent reports the card's temperature, load and VRAM as one number each; it cannot say who
   is using them. That is why the rule names ports and processes at all — and why it is only ever

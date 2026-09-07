@@ -134,6 +134,38 @@ work and parks it on the efficiency cores; the P-cores sat idle. It is not a dia
 nothing is demoted — the miner simply runs on fewer CPUs — which is why it does not pay the
 cache-eviction toll a job-object cap does (rung 50 keeps 27.6%, measured earlier on this fleet).
 
+##### Reserving cores costs more than it looked, and runs hotter — 2026-09-06, 18:0x
+
+The 7% above was measured while the game was running, which is the one condition under which the
+reserved cores are being used. With the machine otherwise idle — game closed, card mining in both
+arms, 15-second samples, means of the last four of seven:
+
+| | `reservedCores=2` | `reservedCores=0` |
+|---|---:|---:|
+| Hashrate (60 s) | 6,418 H/s | **7,549 H/s** |
+| Package temperature | **99.5 °C** | 95.3 °C |
+| Hottest core | **99.8 °C** | 97.5 °C |
+| Mean of all cores | 86.5 °C | 87.9 °C |
+| Package power | 108.7 W | 117.3 W |
+
+**The reservation costs 15%, not 7%**, when nobody is at the machine.
+
+**And it runs the CPU hotter at the point that matters.** The mean core temperature is 1.4 °C
+*lower* with two cores reserved while the peak is 4 °C *higher* — the signature of a hotspot. Twelve
+RandomX threads squeezed onto ten physical cores means two P-cores carry both their hyperthreads,
+and the package pins to TjMax; spread across twelve, the same work makes more total heat (117 W
+against 109 W) and a cooler worst core. Confirmed by the per-core reading taken separately: the two
+reserved cores were the two coolest on the die at 75 °C and 79 °C, while P-Core #6 sat at 100 °C
+with `Distance to TjMax = 0`.
+
+The conclusion is that a *static* reservation is a bad trade — it should hold cores back only while
+somebody is actually there. Set back to 0 on this node on 2026-09-07: 7,557 H/s, 97 °C, huge pages
+1180/1180.
+
+> **This machine is thermally marginal either way.** Even unreserved it touches 97-100 °C at
+> 117 W, which is a lot for an i7-12700KF, and its fans read `1781 1347 0 0 1677` RPM — two
+> headers at zero. Worth a look inside before reading any more CPU measurements off this node.
+
 ##### After the fix, same session, game still running
 
 Rule pushed as `{ tcpPort: 11434, processNames: ["dontstarve_steam_x64"], quietSeconds: 300 }`.
