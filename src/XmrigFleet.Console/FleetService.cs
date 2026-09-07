@@ -130,8 +130,15 @@ public sealed class FleetService
             // behave around the person at the machine", and an operator who syncs one and not the
             // other would find a node half-configured with nothing saying which half.
             var reserved = _config.ReservedCoresFor(node);
+            var (maxCpu, maxTemp) = _config.CpuBudgetFor(node);
             var saved = await client.PutConfigAsync(
-                new MinerConfigDto { Throttle = settings, ReservedCores = reserved }, token);
+                new MinerConfigDto
+                {
+                    Throttle = settings,
+                    ReservedCores = reserved,
+                    MaxCpuPercent = maxCpu,
+                    MaxCpuTemperatureC = maxTemp,
+                }, token);
             if (saved is null) return CommandResultDto.Failure("empty response");
 
             var applied = saved.Throttle;
@@ -147,6 +154,15 @@ public sealed class FleetService
                 _ when cores == reserved => $", {cores} core(s) reserved",
                 _ => $", but this agent did not take the core reservation; run upgrade-agents",
             };
+
+            // Read back, never echoed. An agent too old for these drops them, and reporting what
+            // was asked for would call a node unprotected against heat a node protected against it.
+            if (maxCpu is not null || maxTemp is not null)
+            {
+                note += (saved.MaxCpuPercent, saved.MaxCpuTemperatureC) == (maxCpu, maxTemp)
+                    ? $", ceilings {Ceiling(maxCpu, maxTemp)}"
+                    : ", but this agent did not take the CPU ceilings; run upgrade-agents";
+            }
 
             return CommandResultDto.Success(Describe(applied) + note);
         }, ct);
@@ -178,6 +194,15 @@ public sealed class FleetService
 
             return CommandResultDto.Success(DescribeGpuSettings(applied));
         }, ct);
+
+    /// <summary>The two CPU ceilings in one phrase, naming only the ones that are set.</summary>
+    public static string Ceiling(int? maxCpuPercent, double? maxCpuTemperatureC)
+    {
+        var parts = new List<string>();
+        if (maxCpuPercent is { } pct) parts.Add($"{pct}% of full speed");
+        if (maxCpuTemperatureC is { } temp) parts.Add($"{temp:0.#}C");
+        return parts.Count == 0 ? "none" : string.Join(" and ", parts);
+    }
 
     /// <summary>What a node was actually left set to, in the operator's terms.</summary>
     public static string DescribeGpuSettings(GpuMinerSettingsDto settings)

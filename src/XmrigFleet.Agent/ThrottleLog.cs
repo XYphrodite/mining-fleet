@@ -80,6 +80,25 @@ public sealed class ThrottleLog
             minute.Minute.LocalDateTime, rung, body, dropped));
     }
 
+    /// <summary>
+    /// One change of the miner's thread count, with the temperature behind it.
+    ///
+    /// In the same file as the rungs and the per-minute load, because they are the same question
+    /// asked three ways — what was this machine allowed to do, and why — and an operator chasing a
+    /// node that is slower than its twin should not have to know which of three logs to open.
+    /// </summary>
+    public void RecordThreads(int from, int to, double? temperatureC, string reason)
+    {
+        var temp = temperatureC is { } c
+            ? string.Format(CultureInfo.InvariantCulture, "{0:0.#}C", c)
+            : "no reading";
+
+        Append(string.Format(
+            CultureInfo.InvariantCulture,
+            "{0:yyyy-MM-dd HH:mm:ss}  threads {1,2} -> {2,-2}  cpu={3,-11}  {4}",
+            DateTime.Now, from, to, temp, reason));
+    }
+
     private void Append(string line)
     {
         lock (_gate)

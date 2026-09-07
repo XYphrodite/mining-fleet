@@ -151,6 +151,34 @@ public sealed record MinerConfigDto
     public ThrottleSettingsDto? Throttle { get; init; }
 
     /// <summary>
+    /// The most of this node's mining capacity the miner may use, 1-100.
+    ///
+    /// A share of what the miner would run at full speed — the same convention the throttle
+    /// ladder's levels use — not a share of the machine, because those differ and the miner's own
+    /// is the one an operator can reason about. Full speed here is the thread count xmrig would
+    /// choose for itself: one RandomX thread per physical core, capped by 2 MB of L3 each.
+    ///
+    /// Applied by rewriting the miner's thread list live, which costs no restart and keeps the
+    /// huge pages. Measured on an i7-12700KF: 12 threads give 7,547 H/s at 99.7 C, 10 give 6,952
+    /// at 93.3 C, 8 give 6,428 at 89.3 C — so this is a real trade, roughly linear, and not a way
+    /// to win back hashrate lost to throttling. That was tested and it is not what happens.
+    /// </summary>
+    public int? MaxCpuPercent { get; init; }
+
+    /// <summary>
+    /// The temperature the CPU package must stay under, in degrees Celsius.
+    ///
+    /// The agent drops a mining thread when it is exceeded and adds one back after a long stretch
+    /// comfortably below, never going above what <see cref="MaxCpuPercent"/> allows. Coming down
+    /// is quick and going up is slow, the same asymmetry the throttle and the GPU pause use: the
+    /// cost of reacting late to heat is paid in silicon.
+    ///
+    /// Null leaves the node alone, which is right for a rig that runs cool. A node with no
+    /// readable CPU temperature holds its current thread count rather than assuming either way.
+    /// </summary>
+    public double? MaxCpuTemperatureC { get; init; }
+
+    /// <summary>
     /// Physical cores kept out of the miner's hands for whoever is sitting at the machine.
     ///
     /// Unlike the throttle this is not a response to load, and deliberately so: the load a person
