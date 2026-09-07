@@ -168,7 +168,9 @@ hardware.
 | `ThrottleService` | Holds the miner back while somebody is using the machine: reads the ladder every second, caps or stops the miner, records every decision |
 | `ThrottleLadder` | The rung rule itself — pure, clock-injected, and the part the tests drive |
 | `MinerCpuLimit` | The CPU cap, a named job object so an agent restart can still lift its own limit |
-| `CpuReservation` | Which logical CPUs the miner may use when whole cores are held back for the person at the machine. Reads the real topology through `GetLogicalProcessorInformationEx`, because "two logical per core" is wrong on a hybrid CPU — an i7-12700KF reports 12 cores and 20 logical processors, and four of those cores have one thread each |
+| `CpuReservation` | The machine's own shape: physical cores, L3 size, which logical CPU each mining thread belongs on, and what a percentage ceiling comes to in threads. Reads the real topology through `GetLogicalProcessorInformationEx`, because "two logical per core" is wrong on a hybrid CPU — an i7-12700KF reports 12 cores and 20 logical processors, and four of those cores have one thread each |
+| `ThermalGovernor` | The temperature rule itself — pure, clock-injected, and the part the tests drive. Down after a minute, up after ten cool ones, holding when the sensor says nothing |
+| `CpuBudgetService` | Holds the miner to the operator's two ceilings by changing its thread count. Both settings drive one actuator on purpose: as two bounds on one number the answer is the lower of them, and there is nothing to resolve between them |
 | `CpuReservationService` | Keeps that mask applied. A background loop rather than something done at start-up: affinity dies with the process, so a miner restarted by the throttle, by an operator or by autostart after a reboot comes back holding the whole machine |
 | `SystemLoadReader` | `GetSystemTimes` + `GlobalMemoryStatusEx`, with the miner's own CPU time subtracted |
 | `ThrottleLog` | `throttle.log` beside the binary: one line a minute of what the CPU was doing, plus every rung change with the readings behind it |
@@ -226,6 +228,8 @@ chasing coverage.
 | `TailnetDiscoveryTests` | Discovery stores the MagicDNS name only when it resolves here, falls back to the address when it does not or when the tailnet has MagicDNS off, and skips a machine with no tailnet address |
 | `AutoStartTests` | An autostart push keeps the tuned ladder and the rest of the node's config; the setting survives an agent restart; the node's own answer beats the installed default while an untold node still follows it; autostart does not restart a miner the throttle stopped; and "unset" reads differently from "off" |
 | `GpuMiningTests` | A push that turns the card on keeps the lolMiner path and the session flag the node already knew; a push replaces the whole set of pause conditions rather than inheriting one nobody asked for; a node override replaces only what it names; and the stand-down is immediate while the return waits out the quiet period, restarted by any interruption. Since 1.13.1 also: a named process stands the card down even when the rule watches a port too — the defect that let a game freeze `mks68i7rtx` — every reason is reported rather than the first, a quiet rule names what it was watching, and the singular process field is folded in beside the list |
+| `CpuBudgetTests` | Full speed is one thread per core until 2 MB of L3 each runs out, checked against what xmrig chose on all three nodes; a ceiling rounds **down**, because rounding 67% of twelve up to nine runs a node at 75% under a setting that says 67; a tiny percentage gives a slow miner and never a stopped one; and for the governor — an unreadable sensor holds rather than guessing in either direction, one thread is the floor even when still too hot, a second thread is not dropped before the first has settled, a spike forgets the cool minutes banked before it, and the percentage caps how far the thermal recovery may climb |
+| `CpuReservationTests` | A reserved core frees both of its threads, never half of one; the two-core mask matches the 1048560 measured on the live node; reserving more cores than the machine has still leaves the miner one; a machine that would not report its topology reserves nothing rather than guessing; and the singular and list process fields fold together |
 | `LoadJournalTests` | A minute closes once and only when the next one starts; a peak survives an average that hides it; an unusable sample is counted rather than averaged in as an idle machine; a minute nobody could measure still produces a line; throttling off reads differently from a rung of 0%; a gap does not merge two minutes; and memory survives a sample whose CPU delta did not |
 | `GpuPoolTests` | The pool and coin slug are read out of the stratum host and the worker name is not mistaken for part of the address; a pool this console cannot read is declined rather than guessed at, because a wrong address answers with somebody else's zero instead of an error; the daily rate is measured over the window the payouts cover, is refused on a single payout, and reads a long history over its last day only |
 | `MenuNavigationTests` | Arrows wrap in both directions; Escape answers with the menu's own way out and never with one of a two-answer menu's answers; the node picker backs out to null and the multi-picker to an empty list rather than the whole fleet; and a menu cannot be built with a cancel value it does not offer |
@@ -299,7 +303,7 @@ All routes live under `/api/v1` and require the `X-Fleet-Token` header.
       "enabled": true, "powerFallbackWatts": 220 },
     { "name": "rig-2", "host": "100.100.10.12", "port": 47800,
       "enabled": true, "powerFallbackWatts": 310, "pricePerKwh": 7.2,
-      "reservedCores": 2,
+      "reservedCores": 2, "maxCpuPercent": 67, "maxCpuTemperatureC": 90,
       "throttle": { "enabled": true, "floorLevel": 25 },
       "gpuMinerPath": "C:\\mining\\lolMiner",
       "gpuMiner": { "enabled": true, "algorithm": "CR29",
@@ -589,7 +593,10 @@ xmrig-fleet/
       adapter returned `paid=1155.12 XTM`, `confirmed=104.62`, `unconfirmed=159.07`, five payouts,
       and **1,039.10 XTM/day over a 22 h window** — matching a figure computed by hand from the raw
       JSON to a tenth. Priced through CoinGecko's `minotari` at 0.069066 ₽, that is ≈71.8 ₽/day the
-      fleet had been earning invisibly
+      fleet had been earning invisibly. That rouble figure is the 09-05 price and nothing else: the
+      same unchanged 1,039 XTM/day was worth ≈100 ₽/day by 09-07. The XTM/day is the verification;
+      see [MiningMeasurements.md](MiningMeasurements.md) for the current price and for the check
+      that Kryptex's own chart and CoinGecko agree to the fifth decimal
 
 - [x] **The card stands down for a game, watched live on `mks68i7rtx` on 2026-09-06.** The rule
       had watched only TCP 11434 because `IsBusy` returned on the first condition it found and
@@ -643,6 +650,14 @@ xmrig-fleet/
       across the restart, and the pushed pause rule survived the update on `mks68i7rtx`
 
 ### Implemented, Not Yet Verified Live ⏳
+- [ ] **`maxCpuPercent` and `maxCpuTemperatureC` as pushed settings.** The actuator underneath them
+      is verified — rewriting xmrig's `cpu.rx` through its own config API moved a 39-hour-old miner
+      between 12, 10 and 8 threads with no restart, no lost pool connection and full huge pages
+      each time, and 8 threads is what took that node from 99.7 °C to 89.3 °C. What has not run
+      live is the loop that decides it: `ThermalGovernor` stepping a node down on its own heat and
+      back up after ten cool minutes. Unit-tested against the awkward cases — an unreadable sensor,
+      a spike that restarts the wait, the floor of one thread, and the percentage ceiling capping
+      the thermal recovery
 - [ ] **A reserved core surviving a reboot.** Everything up to that is verified (see above): the
       setting is stored on the node, and the service re-applies it within six seconds of the mask
       being taken away. What nobody has watched is `mks68i7rtx` coming back from a cold boot with
@@ -693,8 +708,9 @@ xmrig-fleet/
       per-node record of every pause and resume the way `throttle.log` records rungs
 - [ ] **Fold the cards into the profit line, and read the other pool.** `GpuPoolService` reads
       Kryptex and Economics shows it in its own table, but the headline profit still counts a
-      card's electricity without its revenue — on this fleet, roughly 72 ₽/day missing from a
-      45 ₽/day figure. Doing it properly means deciding how two coins share one column when one
+      card's electricity without its revenue — on this fleet, roughly 100 ₽/day missing from a
+      45 ₽/day figure at the 2026-09-07 price, and it was 72 ₽ two days earlier, so the omission
+      grows with XTM. Doing it properly means deciding how two coins share one column when one
       figure is a measurement and the other an estimate, which is why it was not done by simply
       adding them. unMineable is the other half: it publishes a balance API too, and its login
       shape (`XMR:address.worker`) is exactly why `TargetFor` declines it today rather than
@@ -776,8 +792,9 @@ xmrig-fleet/
   Monero figures rather than inside them: two coins summed into one "income" column lose the thing
   that distinguishes them, and one is a measurement while the other is an estimate. The consequence
   is that the headline **Profit/day still counts the cards' electricity and not their revenue** —
-  on this fleet that is roughly 72 ₽/day missing from a 45 ₽/day figure. Only Kryptex is read;
-  unMineable spells its login differently and is declined rather than guessed at.
+  on this fleet that is roughly 100 ₽/day missing from a 45 ₽/day figure at the 2026-09-07 price —
+  the card out-earns the whole CPU fleet twice over and the headline says none of it. Only Kryptex
+  is read; unMineable spells its login differently and is declined rather than guessed at.
 - **A hidden monitor window makes that monitor unopenable for the person at the machine.** Task
   Manager is single-instance per session, so a hidden instance does not sit quietly beside a new
   one - it swallows it. Measured with nothing running to begin with: starting one hidden gives one
@@ -883,8 +900,8 @@ xmrig-fleet/
 ## Document Information
 
 **Document Version**: v1.2
-**Last Updated**: 2026-09-06
-**Product Version**: 1.14.0
+**Last Updated**: 2026-09-07
+**Product Version**: 1.15.0
 **Status**: Active
 **Repository**: `c:\Repos\xmrig-fleet` (branch `master`), published at
 [github.com/XYphrodite/xmrig-fleet](https://github.com/XYphrodite/xmrig-fleet)

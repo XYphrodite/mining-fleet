@@ -8,7 +8,7 @@ optimistic direction, and only pool credits have ever been trustworthy.
 miner reported a rate with no pool involved. *Estimated* means a third party computed it and it
 has not been checked against a payout.
 
-**Last updated**: 2026-09-04 12:00
+**Last updated**: 2026-09-07 07:15
 
 > No wallet addresses in this file. The Monero address lives in `miner.json` on each node and in
 > `fleet.json` on the console; the Tari address lives in `C:\mining\tari-address.txt` on
@@ -66,7 +66,7 @@ taken under a hand-built scheduled task instead, which is worth knowing when com
 | Etchash | unMineable | 31.4 Mh/s | **1.32 ₽/day** *measured*, 86 min | 63 °C / 31% | Worst of the working set |
 | FishHash | unMineable | 21.0 Mh/s | **2.96 ₽/day** *measured*, 50 min | 65 °C / 37% | Middle |
 | NexaPoW | unMineable | 62–64.6 Mh/s | **4.0 ₽/day** *measured*, two windows | 81 °C / 100% | Best on unMineable; also the most heat |
-| Cuckaroo29 (Tari) | Kryptex | 4.48 g/s | **1,039 XTM/day** *measured from five actual payouts* — ≈72 ₽/day at the 2026-09-05 price, ≈59 ₽ net | 69 °C / 40% | Current. Out-earns the entire CPU fleet, and the only GPU configuration here that beats its own electricity |
+| Cuckaroo29 (Tari) | Kryptex | 4.48 g/s | **1,039 XTM/day** *measured from five actual payouts* — ≈100 ₽/day at the 2026-09-07 price, ≈87 ₽ net (≈72 / ≈59 on 09-05; the coin flow did not change, the price did) | 69 °C / 40% | Current. Out-earns the entire CPU fleet, and the only GPU configuration here that beats its own electricity |
 
 Cuckaroo29 benchmarked at **4.53 g/s** with no pool attached, against a third-party reference of
 4.07 g/s — this card runs above spec.
@@ -265,13 +265,65 @@ Not mining by operator decision. Hosts a local model.
 
 | Constant | Value | Date |
 |----------|-------|------|
-| XMR | 47,558 ₽ / $548.72 | 2026-09-04 11:56 |
-| USD | 86.67 ₽ | 2026-09-04 11:56 |
-| XTM | $0.00056797 / 0.0492 ₽ (CoinGecko `minotari`, rank 1850) | 2026-09-04 11:56 |
+| XMR | 46,173 ₽ / $533.07 | 2026-09-07 07:11 |
+| USD | 86.62 ₽ | 2026-09-07 07:11 |
+| XTM | $0.00111513 / **0.096589 ₽** (CoinGecko `minotari`, cap $7.18M) | 2026-09-07 07:11 |
+| XTM — earlier readings | $0.00056797 / 0.0492 ₽ (09-04) → $0.000809 (09-05) → $0.001115 (09-07) | see below |
 | NEXA | $0.00000101 (rank 1156) | 2026-09-04 |
 | Electricity | 6.61 ₽/kWh ($0.076) | — |
 | RTX 4060 draw | 115 W limit; `power.draw` unavailable via nvidia-smi on this card | — |
 | RX 6500 XT draw | 88.8 W *measured* | — |
+
+### XTM doubled in a week, and the two price sources agree — 2026-09-07
+
+CoinGecko's daily closes for `minotari`, read from `/coins/minotari/market_chart`:
+
+| Date | $/XTM |
+|---|---:|
+| 2026-09-01 | 0.000522 |
+| 2026-09-02 | 0.000540 |
+| 2026-09-03 | 0.000542 |
+| 2026-09-04 | 0.000544 |
+| 2026-09-05 | **0.000809** |
+| 2026-09-06 | 0.000799 |
+| 2026-09-07 | 0.001234, now 0.001115 |
+
+**2.1x in seven days**, +37.5% in the last twenty-four hours alone, on 24 h volume of $309,913
+against $61,641 a week ago — the volume moved with the price, so this is trading rather than a
+thin print.
+
+**The pool's chart is not talking its own book.** This was worth checking, because the 72 ₽/day
+recorded below came from Kryptex's price and the 0.0492 ₽ in the constants table came from
+CoinGecko, and the two look like a 42% disagreement. They are not: they are four days apart.
+Read at the same minute, `pool.kryptex.com/api/v1/coin/xtm-c29/price/chart` ends at
+**$0.0011150083** and CoinGecko answers **$0.00111513** — agreement to the fifth decimal. Either
+source can be used; neither needs a haircut. The lesson is the one this file already states in
+the payouts section: **keep the XTM/day separate from the ₽/day**, and date every rouble figure.
+
+At today's price the RTX 4060's measured 1,039 XTM/day is **≈100 ₽/day gross, ≈87 ₽ net** of
+~13 ₽ of electricity — against the ≈72 ₽ / ≈59 ₽ recorded on 09-05. The coin flow did not change;
+nothing about the card changed. Only the market did.
+
+### Can the XTM be sold? — yes, and the constraint is the amount, not the market
+
+| | |
+|---|---|
+| Where | **MEXC** (XTM/USDT, the deepest pair), Nonkyc.io, BTSE, CoinEx, LBank; ~6 exchanges, ~8 markets |
+| Deposit network | Native **MINOTARI** L1, not an ERC-20. A wrapped `wXTM` on Ethereum exists and is a *different* deposit asset |
+| Route in use | Kryptex pays to the Tari address in `C:\mining\tari-address.txt`; from there, send to an exchange |
+| Alternative | Kryptex documents paying straight to an MEXC deposit address, and warns against it — exchanges rotate deposit addresses and a 200-XTM payout to a stale one is gone |
+| Bridge | Tari Universe desktop wraps XTM → wXTM on Ethereum via LayerZero, one-way, with reports of stuck transactions. Ethereum gas makes this wrong for sums this size |
+
+**Liquidity is not the constraint.** A year at 1,039 XTM/day is ~379,000 XTM ≈ $423, which is
+0.14% of a single day's volume.
+
+**The amount is.** Accrued so far — 1,155 paid + ~264 on the pool — is ~1,420 XTM ≈ **137 ₽**.
+An exchange withdrawal fee exceeds that. At today's price the card accrues ~36,600 ₽/year, so
+this becomes worth doing after months, not days.
+
+**Nothing here is on-chain verifiable.** Tari is private by default; the pool's payout list with
+its transaction ids is the only record, which is a reason to keep this file rather than trust
+recall.
 
 ### unMineable takes roughly half
 
@@ -428,31 +480,34 @@ Ordered by expected value, not by effort.
 
 ### 1. Monero + Tari merge mining — the largest unexplored lever, now with numbers
 
-Tari is merge-mineable with Monero's RandomX, so the same hashes earn both. Computed 2026-09-05
-from Kryptex's live network figures, at XMR 46,300 ₽ and XTM 0.069066 ₽:
+Tari is merge-mineable with Monero's RandomX, so the same hashes earn both. Yields per kH/s were
+computed 2026-09-05 from Kryptex's live network figures; the prices are 2026-09-07.
 
-| Per 1 kH/s of RandomX, per day | Yield | Value |
-|---|---:|---:|
-| Monero | 0.0000721 XMR | **3.34 ₽** |
-| Tari on RandomX | 38.11 XTM | **2.63 ₽** |
-| Both, merge-mined | — | **5.97 ₽** |
+| Per 1 kH/s of RandomX, per day | Yield *(09-05 network)* | Value *(09-05 price)* | Value *(09-07 price)* |
+|---|---:|---:|---:|
+| Monero | 0.0000721 XMR | 3.34 ₽ | **3.33 ₽** |
+| Tari on RandomX | 38.11 XTM | 2.63 ₽ | **3.68 ₽** |
+| Both, merge-mined | — | 5.97 ₽ | **7.01 ₽** |
 
-Two conclusions, and the first is the one worth saying out loud:
+**The break-even has been crossed.** This section was written saying *"the break-even is 0.0876 ₽
+per XTM… XTM is at 0.069 today, so it would have to rise 27%"*. It rose 40% in two days. At
+XMR 46,173 ₽ the break-even is **0.0874 ₽** and XTM is at **0.0966 ₽** — so **Tari on RandomX now
+out-earns Monero outright, by 10.6%**, and the question has stopped being only about merge mining.
 
-**Switching the CPUs to Tari would lose money.** Monero pays 27% more per hash than Tari does on
-the same algorithm. Tari only wins when it is earned *as well as* Monero, not instead of it.
+**Treat that crossing as provisional, because half the table is stale.** Only the prices were
+re-read. The 38.11 XTM per kH/s is the network figure from 09-05, and a coin that doubles pulls
+hashrate in behind it — Tari's difficulty almost certainly rose over the same two days, which
+would push the yield, and therefore the crossing, back down. **Re-read Kryptex's network figures
+before acting on this.** The margin is 10%, which is inside the error this has not measured.
 
-**Merge mining is worth +79%** — on this fleet's 14.87 kH/s, about **+39 ₽/day for no extra watts
-at all**. That is nearly the entire current CPU income again.
+**Merge mining is worth +111% at today's prices** (it was +79%) — on this fleet's 14.87 kH/s,
+**49.5 ₽/day becomes ~104 ₽/day for no extra watts at all**, about +55 ₽/day. Unlike the crossing
+above, this conclusion is robust: merge mining adds Tari's yield to Monero's whatever the ratio
+between them is, so it holds even if the XTM half is overstated.
 
 **The method is cross-checked.** Applied to the RTX 4060 on Cuckaroo29 it predicts 944 XTM/day
-where five real payouts measured 1,039 — it under-predicts by 10%, so the Tari-RandomX figure
+where five real payouts measured 1,039 — it under-predicts by 10%, so the Tari-RandomX yield
 above is if anything conservative.
-
-**The break-even is 0.0876 ₽ per XTM.** Above that, Tari on RandomX out-earns Monero outright and
-the question stops being about merge mining. XTM is at 0.069 today, so it would have to rise 27%.
-It roughly doubled in the month before this was written, which is the whole reason to keep this
-number written down rather than the conclusion.
 
 **Test**: stand the stack up on one node — a full `monerod`, a Tari base node and the Tari
 merge-mining proxy — point that node's xmrig at the proxy, and compare its XMR credit before and
@@ -463,13 +518,15 @@ infrastructure, not a config change: `monerod` alone is a few hundred GB.
 
 | | Income/day | Draw | Per watt |
 |---|---:|---:|---:|
-| RTX 4060 on Cuckaroo29 | 71.8 ₽ *measured from payouts* | ~110 W | **0.652 ₽/W** |
+| RTX 4060 on Cuckaroo29 | 100.4 ₽ *measured from payouts, priced 09-07* | ~110 W | **0.912 ₽/W** |
 | i7-12700KF on Monero | 24.2 ₽ | 124 W *measured* | **0.195 ₽/W** |
 
-**3.3x**, and it was invisible until the payouts and PawnIO landed on the same day. This does not
-mean sell the CPUs: the card's figure rests on a coin worth $0.0008 that recently doubled, and
-Monero's does not. But it does mean a second card would earn more than a second CPU, and that the
-fleet's shape was chosen when neither number was visible.
+**4.7x**, and it was invisible until the payouts and PawnIO landed on the same day. It was 3.3x
+when first written on 09-05 and the card did nothing differently; XTM doubled again. That
+volatility *is* the caveat, and it cuts both ways — this does not mean sell the CPUs, because the
+card's figure rests on a coin that has moved 2.1x in a week and Monero's does not. But it does
+mean a second card would earn more than a second CPU, and that the fleet's shape was chosen when
+neither number was visible.
 
 ### 2. Does the Tari payout actually arrive? — answered on 2026-09-05: **yes**
 
@@ -493,6 +550,10 @@ electricity at 110 W and 5 ₽/kWh — so **≈59 ₽/day net**.
 Note this is higher than the 49.5 ₽/day recorded above, and the coin flow is not what changed:
 the hashrate is the same 4.4–4.5 g/s. Price and network difficulty are. **Always keep the XTM/day
 separate from the ₽/day** — one is what the card did, the other is what the market did.
+
+The point made itself twice over: by **2026-09-07** the same 1,039 XTM/day was worth **≈100 ₽/day**
+at 0.096589 ₽ per XTM. Three rouble figures — 49.5, 72, 100 — for one unchanged measurement in
+three days. The 09-05 numbers in this section are left as they were recorded.
 
 For scale: the whole CPU fleet earns about 45 ₽/day. This one card out-earns it, and Economics
 shows none of it.

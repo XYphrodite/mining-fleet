@@ -122,7 +122,119 @@ public static class CpuReservation
         }
     }
 
+    /// <summary>
+    /// The logical CPUs a RandomX thread should sit on, one per physical core, in the order the OS
+    /// reports them. The length of this list is the node's full mining capacity.
+    ///
+    /// Derived rather than read back from the miner because the miner's own list is what gets
+    /// rewritten: once it has been cut to eight threads, it no longer says what twelve would be,
+    /// and an agent restarting into a reduced node would take the reduction for the ceiling and
+    /// never let it back up.
+    ///
+    /// It reproduces what xmrig picks unaided. On the fleet's i7-12700KF xmrig chose
+    /// <c>0,2,4,6,8,10,12,14,16,17,18,19</c> — the first thread of each of eight P-cores, then the
+    /// four single-threaded E-cores — and this returns exactly that.
+    /// </summary>
+    public static IReadOnlyList<int> MiningCpus(IReadOnlyList<ulong> cores) =>
+        cores.Select(mask => System.Numerics.BitOperations.TrailingZeroCount(mask)).ToArray();
+
+    /// <summary>
+    /// How many RandomX threads this node runs at full speed: one per physical core, but no more
+    /// than the L3 cache can hold at 2 MB of scratchpad each — xmrig's own rule, and the reason a
+    /// cache-starved machine is slower than its core count suggests.
+    ///
+    /// Checked against all three nodes in this fleet: 12 cores and 25 MB of L3 give 12, matching
+    /// what xmrig chose; 14 cores and 35 MB give 14; 6 cores and 12 MB give 6.
+    /// </summary>
+    /// <param name="cores">Physical cores available for mining.</param>
+    /// <param name="l3Bytes">L3 cache size in bytes, or 0 when the machine will not say.</param>
+    public static int FullThreadCount(int cores, long l3Bytes)
+    {
+        if (cores <= 0) return 0;
+        if (l3Bytes <= 0) return cores;
+
+        var cacheAllows = (int)(l3Bytes / (2L * 1024 * 1024));
+        return Math.Max(1, Math.Min(cores, cacheAllows));
+    }
+
+    /// <summary>
+    /// The thread count a percentage ceiling permits.
+    ///
+    /// Rounded down, because this is a ceiling and rounding up walks through it: 67% of twelve
+    /// threads is 8.04, and calling that nine would run the node at 75% of full speed under a
+    /// setting that says 67.
+    ///
+    /// Floored at one thread rather than zero, so a low percentage gives a slow miner and never a
+    /// stopped one. Stopping is what the throttle's level 0 is for, and a ceiling that silently
+    /// stopped a rig would be indistinguishable from a crash.
+    /// </summary>
+    public static int ThreadsFor(int fullThreads, int? maxPercent)
+    {
+        if (fullThreads <= 0) return 0;
+        if (maxPercent is not { } pct || pct >= 100) return fullThreads;
+
+        return Math.Clamp(fullThreads * pct / 100, 1, fullThreads);
+    }
+
+    /// <summary>
+    /// Total L3 cache in bytes, or 0 when the machine will not say — which callers read as "cache
+    /// is not the binding constraint", the right answer whenever it is not.
+    ///
+    /// Read through the same call as the topology rather than through WMI: a WMI query is a round
+    /// trip to a service that one node in this fleet answers "RPC server unavailable" from, and
+    /// that service has already taken an agent down once.
+    /// </summary>
+    public static long L3CacheBytes()
+    {
+        if (!OperatingSystem.IsWindows()) return 0;
+
+        try
+        {
+            uint length = 0;
+            if (!GetLogicalProcessorInformationEx(RelationCache, IntPtr.Zero, ref length)
+                && Marshal.GetLastWin32Error() != ErrorInsufficientBuffer)
+                return 0;
+
+            var buffer = Marshal.AllocHGlobal((int)length);
+            try
+            {
+                if (!GetLogicalProcessorInformationEx(RelationCache, buffer, ref length)) return 0;
+
+                long total = 0;
+                var offset = 0;
+                while (offset < length)
+                {
+                    var record = buffer + offset;
+                    var size = (int)Marshal.ReadInt32(record, sizeof(int));
+                    if (size <= 0) break;
+
+                    // CACHE_RELATIONSHIP begins after Relationship and Size: Level is the first
+                    // byte and CacheSize a DWORD four bytes later, past Associativity and LineSize.
+                    if (Marshal.ReadByte(record, CacheLevelOffset) == 3)
+                        total += (uint)Marshal.ReadInt32(record, CacheSizeOffset);
+
+                    offset += size;
+                }
+
+                return total;
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
+        }
+        catch (Exception ex) when (ex is EntryPointNotFoundException or DllNotFoundException or OutOfMemoryException)
+        {
+            return 0;
+        }
+    }
+
     private const uint RelationProcessorCore = 0;
+    private const uint RelationCache = 2;
+
+    // Relationship (4) + Size (4), then CACHE_RELATIONSHIP: Level, Associativity, LineSize (2).
+    private const int CacheLevelOffset = 8;
+    private const int CacheSizeOffset = 12;
     private const int ErrorInsufficientBuffer = 122;
 
     // Relationship (4) + Size (4) + Flags (1) + EfficiencyClass (1) + Reserved (20) = 30.

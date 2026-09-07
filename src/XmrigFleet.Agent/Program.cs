@@ -51,6 +51,7 @@ builder.Services.AddHostedService<PerformanceCounterPump>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ThrottleService>());
 builder.Services.AddHostedService(sp => sp.GetRequiredService<GpuPauseService>());
 builder.Services.AddHostedService<CpuReservationService>();
+builder.Services.AddHostedService<CpuBudgetService>();
 builder.Services.AddHttpClient("github", client =>
 {
     // The GitHub API rejects requests without a User-Agent.

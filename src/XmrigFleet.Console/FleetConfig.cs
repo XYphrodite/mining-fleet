@@ -39,6 +39,12 @@ public sealed class FleetConfig
     /// </summary>
     public int? ReservedCores { get; set; }
 
+    /// <summary>Fleet-wide ceiling on how much of its own full speed a miner may use, 1-100.</summary>
+    public int? MaxCpuPercent { get; set; }
+
+    /// <summary>Fleet-wide CPU temperature ceiling in Celsius. Usually a per-node answer.</summary>
+    public double? MaxCpuTemperatureC { get; set; }
+
     /// <summary>
     /// Fleet-wide GPU mining defaults. Mostly a place to keep the pause rule and the pool login;
     /// the algorithm usually belongs on the node, because it is a property of the card.
@@ -142,6 +148,18 @@ public sealed class FleetConfig
     /// fleet-wide default exists only so a fleet of workstations can say it once.
     /// </summary>
     public int ReservedCoresFor(NodeConfig node) => node.ReservedCores ?? ReservedCores ?? 0;
+
+    /// <summary>
+    /// The two ceilings a node runs under: how much of its own full speed the miner may use, and
+    /// how hot its CPU may get. Both resolve node-first, like everything else here.
+    ///
+    /// Nulls are passed through rather than defaulted. A fleet that has never set either must not
+    /// have a number invented for it — the agent leaves a node alone when both are absent, and
+    /// picking a temperature on the operator's behalf would be picking one for hardware this
+    /// console has never seen.
+    /// </summary>
+    public (int? MaxCpuPercent, double? MaxCpuTemperatureC) CpuBudgetFor(NodeConfig node) =>
+        (node.MaxCpuPercent ?? MaxCpuPercent, node.MaxCpuTemperatureC ?? MaxCpuTemperatureC);
 
     /// <summary>
     /// What a node's graphics card should mine: the fleet's answer with that node's exceptions
@@ -324,6 +342,21 @@ public sealed class NodeConfig
     /// same two on a rig nobody touches would be 7% given away for nothing.
     /// </summary>
     public int? ReservedCores { get; set; }
+
+    /// <summary>
+    /// The most of its own full speed this miner may use, 1-100. Full speed is the thread count
+    /// xmrig would pick unaided: one RandomX thread per physical core, capped by 2 MB of L3 each.
+    /// </summary>
+    public int? MaxCpuPercent { get; set; }
+
+    /// <summary>
+    /// The temperature this machine's CPU package must stay under, in Celsius.
+    ///
+    /// Belongs on the node because it is a fact about a cooler and a room, not about a fleet. The
+    /// i7-12700KF here reaches 99.7 C at twelve threads and 89.3 C at eight, and the machine
+    /// beside it never gets near either number.
+    /// </summary>
+    public double? MaxCpuTemperatureC { get; set; }
 
     /// <summary>
     /// This machine's graphics card settings. Usually where the algorithm actually lives: an

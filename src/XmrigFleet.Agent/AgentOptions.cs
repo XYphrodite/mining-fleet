@@ -119,6 +119,8 @@ public sealed class MinerConfigStore
                 AutoStartMiner = patch.AutoStartMiner ?? _current.AutoStartMiner,
                 Throttle = MergeThrottle(_current.Throttle, patch.Throttle),
                 ReservedCores = patch.ReservedCores ?? _current.ReservedCores,
+                MaxCpuPercent = patch.MaxCpuPercent ?? _current.MaxCpuPercent,
+                MaxCpuTemperatureC = patch.MaxCpuTemperatureC ?? _current.MaxCpuTemperatureC,
                 MinerStoppedByThrottle = patch.MinerStoppedByThrottle ?? _current.MinerStoppedByThrottle,
                 GpuMiner = MergeGpuMiner(_current.GpuMiner, patch.GpuMiner),
                 GpuStoppedByPause = patch.GpuStoppedByPause ?? _current.GpuStoppedByPause,
