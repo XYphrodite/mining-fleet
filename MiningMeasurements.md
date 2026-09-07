@@ -171,6 +171,22 @@ The same output, ten degrees cooler. Affinity moves the same work onto fewer cor
 the heat; fewer threads do less work and spread what remains. `reservedCores` is the right shape for
 handing a person a core to type on, and the wrong one for temperature.
 
+##### The ceiling governing itself — 2026-09-07, 07:24
+
+`maxCpuTemperatureC` driven on the live node, agent 1.15.0. Holding 8 threads at 88 °C under a
+90 °C ceiling; the ceiling was then dropped to 80 °C to force it to act.
+
+```
+07:24:22  threads  8 -> 7   cpu=88C   88C is over 80C, dropping to 7 thread(s)
+07:25:22  threads  7 -> 6   cpu=81C   81C is over 80C, dropping to 6 thread(s)
+07:35:58  threads  6 -> 7   cpu=75C   75C has been under 87C for 10 minutes, trying 7
+```
+
+Sixty seconds to the second between the two drops — the settling interval — and no third one once
+77 °C was reached, because that is within the 3 °C margin of the 80 °C ceiling. Restoring the 90 °C
+ceiling brought a thread back after the full ten-minute wait, and the node settles at 8 threads and
+~88 °C, which is the equilibrium the ceiling asks for.
+
 ##### What HWMonitor sees that the agent does not — 2026-09-07, 06:39
 
 An operator-supplied CPUID HWMonitor report of the same node, taken just before the change above
@@ -308,7 +324,8 @@ nothing about the card changed. Only the market did.
 
 | | |
 |---|---|
-| Where | **MEXC** (XTM/USDT, the deepest pair), Nonkyc.io, BTSE, CoinEx, LBank; ~6 exchanges, ~8 markets |
+| Where | Six exchanges, eight markets, read from CoinGecko's `/coins/minotari/tickers` on 09-07. By 24 h volume: **Biconomy $95k**, **Nonkyc.io $95k**, **MEXC $73k**, CoinEx $44k, SafeTrade $18k, BTSE $2.8k — all XTM/USDT. Not on Binance, Coinbase, Bybit, OKX, Kraken or Gate |
+| Straight into XMR | **Nonkyc.io runs an XTM/XMR pair** (~$4.7k/day; SafeTrade has a dead one at $7/day). For this fleet that is the interesting route: the card's coin converts into the coin the CPUs already mine, without touching fiat |
 | Deposit network | Native **MINOTARI** L1, not an ERC-20. A wrapped `wXTM` on Ethereum exists and is a *different* deposit asset |
 | Route in use | Kryptex pays to the Tari address in `C:\mining\tari-address.txt`; from there, send to an exchange |
 | Alternative | Kryptex documents paying straight to an MEXC deposit address, and warns against it — exchanges rotate deposit addresses and a 200-XTM payout to a stale one is gone |
@@ -480,34 +497,46 @@ Ordered by expected value, not by effort.
 
 ### 1. Monero + Tari merge mining — the largest unexplored lever, now with numbers
 
-Tari is merge-mineable with Monero's RandomX, so the same hashes earn both. Yields per kH/s were
-computed 2026-09-05 from Kryptex's live network figures; the prices are 2026-09-07.
+Tari is merge-mineable with Monero's RandomX, so the same hashes earn both. Everything below —
+both yields and both prices — was re-read **2026-09-07 07:40** from
+`pool.kryptex.com/api/v1/net/stats/xtm-rx`, `/api/v1/coin/xtm-rx/info` and Hashvault's
+`/v3/monero/pool/stats`. Inputs: Tari RandomX network 50,477,539 H/s emitting 1,504,202 XTM/day;
+Monero difficulty 683,004,152,971 at 0.607963 XMR/block; XMR 46,144 ₽, XTM 0.098176 ₽.
 
-| Per 1 kH/s of RandomX, per day | Yield *(09-05 network)* | Value *(09-05 price)* | Value *(09-07 price)* |
-|---|---:|---:|---:|
-| Monero | 0.0000721 XMR | 3.34 ₽ | **3.33 ₽** |
-| Tari on RandomX | 38.11 XTM | 2.63 ₽ | **3.68 ₽** |
-| Both, merge-mined | — | 5.97 ₽ | **7.01 ₽** |
+| Per 1 kH/s of RandomX, per day | Yield | Value |
+|---|---:|---:|
+| Monero | 0.00007691 XMR | **3.55 ₽** |
+| Tari on RandomX | 29.80 XTM | **2.93 ₽** |
+| Both, merge-mined | — | **6.48 ₽** |
 
-**The break-even has been crossed.** This section was written saying *"the break-even is 0.0876 ₽
-per XTM… XTM is at 0.069 today, so it would have to rise 27%"*. It rose 40% in two days. At
-XMR 46,173 ₽ the break-even is **0.0874 ₽** and XTM is at **0.0966 ₽** — so **Tari on RandomX now
-out-earns Monero outright, by 10.6%**, and the question has stopped being only about merge mining.
+**Switching the CPUs to Tari would still lose money — Monero pays 21% more per hash.** This
+reverses a conclusion that stood in this file for a few hours on 09-07, and the reversal is the
+lesson. XTM's price *did* clear the 0.0876 ₽ break-even quoted in the earlier version. It did not
+help, because **the break-even moved faster than the price did**: Tari's RandomX network went
+from 38.7 to 50.5 MH/s inside a single day's series — hashrate chasing a coin that had doubled —
+so the yield per kH/s fell from 38.11 XTM to 29.80. The break-even is now **0.119 ₽ per XTM**
+against a price of 0.0982; it needs another **+21%**, having needed +27% two days ago after
+rising 40%. A price move in a small coin is largely self-cancelling for a miner, and this is a
+measurement of that rather than a warning about it.
 
-**Treat that crossing as provisional, because half the table is stale.** Only the prices were
-re-read. The 38.11 XTM per kH/s is the network figure from 09-05, and a coin that doubles pulls
-hashrate in behind it — Tari's difficulty almost certainly rose over the same two days, which
-would push the yield, and therefore the crossing, back down. **Re-read Kryptex's network figures
-before acting on this.** The margin is 10%, which is inside the error this has not measured.
+**Never price a stale yield.** The refuted version paired an 09-07 price with an 09-05 yield and
+made Tari look 10.6% ahead. Both halves had moved, in opposite directions: Monero's yield had
+*risen* 6.7% (0.0000721 → 0.00007691, its difficulty eased) while Tari's fell 22%. Re-read both
+sides or neither.
 
-**Merge mining is worth +111% at today's prices** (it was +79%) — on this fleet's 14.87 kH/s,
-**49.5 ₽/day becomes ~104 ₽/day for no extra watts at all**, about +55 ₽/day. Unlike the crossing
-above, this conclusion is robust: merge mining adds Tari's yield to Monero's whatever the ratio
-between them is, so it holds even if the XTM half is overstated.
+**Merge mining is worth +82% and that conclusion is robust** — on this fleet's 14.87 kH/s,
+**52.8 ₽/day becomes 96.4 ₽/day for no extra watts at all**, about +44 ₽/day. It survives the
+correction above because merge mining *adds* Tari's yield to Monero's instead of choosing between
+them, so it wins at any ratio, and it is worth having precisely when mining Tari alone is not.
 
-**The method is cross-checked.** Applied to the RTX 4060 on Cuckaroo29 it predicts 944 XTM/day
-where five real payouts measured 1,039 — it under-predicts by 10%, so the Tari-RandomX yield
-above is if anything conservative.
+**The method is cross-checked, and the cross-check rejected the obvious alternative.** Yield here
+is *share of network hashrate × daily emission*. Applied to the RTX 4060 on Cuckaroo29 —
+4.48 g/s of an 11,858 g/s network emitting 2,508,078 XTM/day — it predicts **948 XTM/day** where
+five real payouts measured 1,039, so it under-predicts by 9.6% and the Tari-RandomX figure above
+is if anything conservative. The textbook alternative, `hashes × reward / difficulty`, predicts
+**29,557 XTM/day** for the same card — wrong by 28x, because Kryptex's Cuckaroo29 difficulty is
+not on a graph-per-second scale. It happens to agree for Monero, whose difficulty is hash-scaled
+(683e9/120 s = 5.69 GH/s, the real network), which is exactly how a wrong method hides.
 
 **Test**: stand the stack up on one node — a full `monerod`, a Tari base node and the Tari
 merge-mining proxy — point that node's xmrig at the proxy, and compare its XMR credit before and
