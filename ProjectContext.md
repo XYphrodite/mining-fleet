@@ -568,8 +568,9 @@ xmrig-fleet/
       `estimatedPowerWatts` empty and `powerIsMeasured=false` to **158.8 W measured** — 123.8 W of
       CPU package under a 7,246 H/s miner, at **92 °C**, a temperature this project had never once
       been able to read. `HardwareDto.SensorNotice` cleared itself, which is the diagnostic
-      agreeing with the library as designed. The card's own draw is still absent: an RTX 4060
-      reports no power sensor at all, at 100% load, so ~110 W of that node remains uncounted
+      agreeing with the library as designed. The card's own draw is absent *from the agent* — see
+      the correction in the issues list below, which is that the card does report it, over an
+      interface neither LibreHardwareMonitor nor NVML uses
 - [x] **A node keeps a record of its own load, throttling on or off.** Verified on `mks68i7rtx`
       minutes after the 1.12.0 roll-out: six consecutive per-minute lines through `/throttle/log`,
       each carrying the average, the peak, the busy-thread translation and memory, with `off` in
@@ -715,6 +716,13 @@ xmrig-fleet/
       runs over names — what has been checked live is `/info`, not a full `status` fan-out
 
 ### Known Issues / Risks ⚠️
+- **The RTX 4060 does report its power draw; the agent just cannot reach it.** Corrected on
+  2026-09-07 from an operator's HWMonitor report: **89.31 W** at 43.40 A and 1.06 V, against a
+  115 W limit. NVML does not have it — `nvidia-smi -q -d POWER` on driver 591.86 answers `N/A` to
+  average, instantaneous and memory power while reporting every limit correctly — and neither does
+  LibreHardwareMonitor, which is what the agent uses. **NVAPI has it.** So this fleet's previous
+  "~110 W uncounted" was wrong twice over: the figure exists, and it is about 20 W lower than the
+  guess. Reaching it from the agent means calling NVAPI directly, which nothing here does yet.
 - **Lowering the miner's priority is a switch, not a dial, on a hybrid CPU.** Dropped to
   `BelowNormal` on `mks68i7rtx` (i7-12700KF), Windows 11 read the miner as background work and
   parked it on the four E-cores: **7,126 H/s became 1,058**, an 85% loss, with the eight P-cores

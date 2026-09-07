@@ -134,6 +134,61 @@ work and parks it on the efficiency cores; the P-cores sat idle. It is not a dia
 nothing is demoted — the miner simply runs on fewer CPUs — which is why it does not pay the
 cache-eviction toll a job-object cap does (rung 50 keeps 27.6%, measured earlier on this fleet).
 
+##### Thread count is the lever. Affinity was the wrong one — 2026-09-07
+
+xmrig's own `cpu.rx` is a list of the logical CPUs its RandomX threads are pinned to, and it can be
+rewritten live through `PUT /2/config` on the loopback API — the agent already starts the miner
+with `--http-no-restricted`, so this needs no new plumbing. Three changes were applied to a miner
+that had been running 39 hours: **the process never restarted, kept its pid, its pool connection
+and its API token, and re-allocated its huge pages in full every time** (1180 → 1178 → 1176 →
+1180). Twenty-second samples, mean of the last three of five.
+
+| Threads | Hashrate | Package | Package power |
+|--------:|---------:|--------:|--------------:|
+| 12 (as found) | 7,547 H/s | **99.7 °C** | 115.1 W |
+| 10 | 6,952 H/s (−7.9%) | 93.3 °C | 115.5 W |
+| **8** | 6,428 H/s (−14.8%) | **89.3 °C** | 104.0 W |
+
+Set to 8 on this node on 2026-09-07 to meet a 90 °C ceiling: **88 °C, 6,432 H/s**, per-core
+`E 67 67 67 67 | P 83 80 86 86 87 87 83 83` — all four E-cores handed back and idle. `autosave` is
+on in xmrig's config, so the setting survives a miner restart by itself.
+
+**Two things this settles.**
+
+*Fewer threads do not win back throttled hashrate.* The suspicion was that a CPU pinned at TjMax
+was losing enough to clocks that cutting threads might cost nothing. It was wrong: 12 threads gave
+the most hashrate even at 99.7 °C, and HWMonitor confirms why — the P-core ratios read **47-49x**
+at 100 °C, so the chip was holding near-maximum turbo. The 15% is real.
+
+*Thread count strictly beats affinity.* Compare the two ways of making this node quieter:
+
+| | Hashrate | Package |
+|---|---:|---:|
+| Two cores reserved (12 threads on 10 cores) | 6,418 H/s | 99.5 °C |
+| **8 threads on 8 cores** | 6,428 H/s | **89.3 °C** |
+
+The same output, ten degrees cooler. Affinity moves the same work onto fewer cores and concentrates
+the heat; fewer threads do less work and spread what remains. `reservedCores` is the right shape for
+handing a person a core to type on, and the wrong one for temperature.
+
+##### What HWMonitor sees that the agent does not — 2026-09-07, 06:39
+
+An operator-supplied CPUID HWMonitor report of the same node, taken just before the change above
+(its E-cores are still at 77-85 °C, and the package still reads 100 °C).
+
+- **The RTX 4060 does report its power draw: 89.31 W**, with 43.40 A at 1.06 V, against a 115 W
+  limit. This contradicts what this project had recorded. The path matters: NVML answers `N/A` to
+  every power field — checked directly with `nvidia-smi -q -d POWER` on driver 591.86, where
+  *Average*, *Instantaneous* and *Memory* power all come back N/A while the limits read fine — and
+  LibreHardwareMonitor, which the agent uses, reports none either. **NVAPI has it.** So the fleet's
+  "~110 W uncounted" for this card was both wrong in principle and about 20 W too high.
+- **The VRM is not the constraint**: VR Cores at 54 °C against a 112 °C limit, delivering 120 W at
+  93 A. Intel PCH 55 °C. DIMMs 44 and 45 °C against a 55 °C warning limit.
+- **The machine has two system fans, not five.** CPU fan 1795 RPM, one case fan 1347 RPM; the GPU's
+  own is 1682. The two zero-RPM readings LibreHardwareMonitor shows are empty headers. 1795 RPM on
+  the CPU while the package sits at 100 °C is worth a look at the BIOS curve — if that is not the
+  fan's ceiling, there is free temperature there.
+
 ##### Reserving cores costs more than it looked, and runs hotter — 2026-09-06, 18:0x
 
 The 7% above was measured while the game was running, which is the one condition under which the
