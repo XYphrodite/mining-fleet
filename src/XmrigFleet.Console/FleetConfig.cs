@@ -46,6 +46,11 @@ public sealed class FleetConfig
     public double? MaxCpuTemperatureC { get; set; }
 
     /// <summary>
+    /// Fleet-wide rule for stopping CPU mining while somebody is at the machine. Nodes override it.
+    /// </summary>
+    public GpuPauseConfig? PauseWhile { get; set; }
+
+    /// <summary>
     /// Fleet-wide GPU mining defaults. Mostly a place to keep the pause rule and the pool login;
     /// the algorithm usually belongs on the node, because it is a property of the card.
     /// </summary>
@@ -160,6 +165,13 @@ public sealed class FleetConfig
     /// </summary>
     public (int? MaxCpuPercent, double? MaxCpuTemperatureC) CpuBudgetFor(NodeConfig node) =>
         (node.MaxCpuPercent ?? MaxCpuPercent, node.MaxCpuTemperatureC ?? MaxCpuTemperatureC);
+
+    /// <summary>
+    /// When a node stops CPU mining for whoever is at it. Replaced whole by a node that names one
+    /// rather than merged field by field, for the reason the card's rule is: a condition a node did
+    /// not ask for is a node standing idle with nothing to explain it.
+    /// </summary>
+    public GpuPauseRuleDto? MinerPauseFor(NodeConfig node) => PauseRuleFor(node.PauseWhile ?? PauseWhile);
 
     /// <summary>
     /// What a node's graphics card should mine: the fleet's answer with that node's exceptions
@@ -364,6 +376,14 @@ public sealed class NodeConfig
     /// every card at once.
     /// </summary>
     public GpuMinerConfig? GpuMiner { get; set; }
+
+    /// <summary>
+    /// When this node stops CPU mining entirely for whoever is at the machine.
+    ///
+    /// Same conditions as the card's rule and, on a node that has both, usually the same list:
+    /// a game wants the processor and the graphics card at once.
+    /// </summary>
+    public GpuPauseConfig? PauseWhile { get; set; }
 
     /// <summary>Directory lolMiner lives in on that node, used to prefill the install prompt.</summary>
     public string? GpuMinerPath { get; set; }

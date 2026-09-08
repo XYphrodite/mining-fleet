@@ -177,7 +177,9 @@ hardware.
 | `LoadJournal` | Folds the once-a-second samples into that per-minute line. Runs whether or not throttling is on, which is the point: throttling ships off, so a node used to keep no record of its own load at all |
 | `MinerConfigStore` | Durable per-node miner settings |
 | `GpuMinerService` | Start/stop/restart lolMiner, read its loopback API, keep the last 200 output lines. A separate class from `MinerService` on purpose: it runs at Normal priority (Task Scheduler's default of 7 cost 18% of shares to staleness), it never touches an `xmrig` process, and it settles for five seconds rather than 700 ms because a card that will not mine fails quietly |
-| `GpuPauseService` | Makes the observations the stand-down rule needs and acts on its answer. Reads the TCP table through `IPGlobalProperties` — `Get-NetTCPConnection` sees nothing from a service — and takes one snapshot of the process table per tick rather than one per watched name |
+| `GpuPauseService` | Acts on the stand-down rule for the card |
+| `MinerPauseService` | The same for the CPU miner, and it stops rather than throttles: a capped miner still holds its 2.3 GB dataset and a thread on every core, which is most of what makes a 16 GB node feel slow while somebody plays on it |
+| `UsageProbe` | The observations both rules need — is that port carrying traffic, is that program running. Reads the TCP table through `IPGlobalProperties` (`Get-NetTCPConnection` sees nothing from a service) and takes one snapshot of the process table per tick rather than one per watched name |
 | `GpuPauseRule` | The stand-down rule itself, pure and clock-injected, and the part the tests drive. Both halves are here: which conditions are met (`Evaluate`) and how long the card waits before coming back |
 
 ### 2. **XmrigFleet.Console**
@@ -232,6 +234,7 @@ chasing coverage.
 | `CpuReservationTests` | A reserved core frees both of its threads, never half of one; the two-core mask matches the 1048560 measured on the live node; reserving more cores than the machine has still leaves the miner one; a machine that would not report its topology reserves nothing rather than guessing; and the singular and list process fields fold together |
 | `LoadJournalTests` | A minute closes once and only when the next one starts; a peak survives an average that hides it; an unusable sample is counted rather than averaged in as an idle machine; a minute nobody could measure still produces a line; throttling off reads differently from a rung of 0%; a gap does not merge two minutes; and memory survives a sample whose CPU delta did not |
 | `GpuPoolTests` | The pool and coin slug are read out of the stratum host and the worker name is not mistaken for part of the address; a pool this console cannot read is declined rather than guessed at, because a wrong address answers with somebody else's zero instead of an error; the daily rate is measured over the window the payouts cover, is refused on a single payout, and reads a long history over its last day only |
+| `MinerPauseTests` | The node stores and reads back the rule; autostart leaves a miner stopped for a game alone, so a reboot mid-session does not start mining under somebody; the throttle's flag and the pause's are tracked separately, so clearing one does not free a miner the other still wants down; stopping is immediate while the return waits from the first quiet sample rather than from the moment the game closed; and every condition is named back to the operator |
 | `MenuNavigationTests` | Arrows wrap in both directions; Escape answers with the menu's own way out and never with one of a two-answer menu's answers; the node picker backs out to null and the multi-picker to an empty list rather than the whole fleet; and a menu cannot be built with a cancel value it does not offer |
 
 `AnsiConsole.Console` is a global that the markup tests swap, so
@@ -304,6 +307,7 @@ All routes live under `/api/v1` and require the `X-Fleet-Token` header.
     { "name": "rig-2", "host": "100.100.10.12", "port": 47800,
       "enabled": true, "powerFallbackWatts": 310, "pricePerKwh": 7.2,
       "reservedCores": 2, "maxCpuPercent": 67, "maxCpuTemperatureC": 90,
+      "pauseWhile": { "processNames": ["cs2"], "quietSeconds": 300 },
       "throttle": { "enabled": true, "floorLevel": 25 },
       "gpuMinerPath": "C:\\mining\\lolMiner",
       "gpuMiner": { "enabled": true, "algorithm": "CR29",
@@ -661,6 +665,15 @@ xmrig-fleet/
       across the restart, and the pushed pause rule survived the update on `mks68i7rtx`
 
 ### Implemented, Not Yet Verified Live ⏳
+- [ ] **Stopping CPU mining for a named program.** `pauseWhile` on the CPU miner, sharing the
+      card's rule, its observations and its asymmetry. Prompted by `desktop-ib88isg`: measured
+      while CS2 was running, the per-core split read
+      `100 70 100 57 100 48 100 49 …` — the miner holding one thread of all fourteen physical
+      cores and the game left on their hyperthread siblings, exactly the arrangement that made a
+      game unplayable on `mks68i7rtx`. It stops rather than throttles because every partial
+      measure is a poor trade here and because a stopped miner also hands back the 2.3 GB of huge
+      pages that a 16 GB node needs. Unit-tested, including that autostart and the throttle each
+      leave a miner this stopped alone; no node has yet been watched standing down for a game
 - [ ] **A reserved core surviving a reboot.** Everything up to that is verified (see above): the
       setting is stored on the node, and the service re-applies it within six seconds of the mask
       being taken away. What nobody has watched is `mks68i7rtx` coming back from a cold boot with
@@ -903,8 +916,8 @@ xmrig-fleet/
 ## Document Information
 
 **Document Version**: v1.2
-**Last Updated**: 2026-09-07
-**Product Version**: 1.15.0
+**Last Updated**: 2026-09-08
+**Product Version**: 1.16.0
 **Status**: Active
 **Repository**: `c:\Repos\xmrig-fleet` (branch `master`), published at
 [github.com/XYphrodite/xmrig-fleet](https://github.com/XYphrodite/xmrig-fleet)
