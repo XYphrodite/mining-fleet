@@ -44,7 +44,8 @@ Pool: Hashvault. This is the fleet's main and only reliably profitable activity.
   Task Manager, 7,097 H/s with Resource Monitor. Eleven explanations tested and discarded; the
   cause is still unknown. `SessionMonitorService` keeps one open as a workaround.
 - **Huge pages are worth 4.5x on the Xeon.** 5.97 kH/s at 100% allocation against 1.34 kH/s at 11%.
-  The remedy is restarting the miner while RAM is free.
+  **Restarting the miner is not the remedy** — see the 2026-09-08 entry below, where two separate
+  starts both got exactly 142 pages of 1182 and the hashrate did not move. Only a reboot does.
 - **A hard CPU cap costs more than it saves.** On the i5: 2,210 H/s uncapped, 610 at rung 50
   (27.6%), 325 at rung 25 (14.7%), clean recovery to 2,390 on release. The step down from uncapped
   costs ~45% beyond proportionality — likely L3 eviction while the job's threads are frozen.
@@ -170,6 +171,45 @@ at 100 °C, so the chip was holding near-maximum turbo. The 15% is real.
 The same output, ten degrees cooler. Affinity moves the same work onto fewer cores and concentrates
 the heat; fewer threads do less work and spread what remains. `reservedCores` is the right shape for
 handing a person a core to type on, and the wrong one for temperature.
+
+##### The cost of stopping: huge pages do not always come back — 2026-09-08, 11:01
+
+The other half of the result above, and it is not a good one. When CS2 closed the miner resumed on
+its own after the full quiet period — and came back with **142 huge pages of 1182**, 12%, running
+**3,650 H/s** against this node's healthy 6,273.
+
+Restarting the miner did not fix it. A second start, four hours later with 4.4 GB free, got
+**exactly 142 pages again** and exactly the same hashrate. The same number twice from two
+independent process starts is not fragmentation luck; it is the amount of contiguous physical
+memory this machine can still offer.
+
+| | Pages | Hashrate |
+|---|---:|---:|
+| Before the game | 1182 / 1182 | 6,273 H/s |
+| Resumed after the game | 142 / 1182 | 3,691 H/s |
+| After an explicit restart | **142 / 1182** | 3,653 H/s |
+
+The state behind it: **4.6 days of uptime**, 16 GB total with 4.3 GB free, and 1.45 GB of
+non-relocatable kernel pool (735 MB paged + 721 MB nonpaged). `SeLockMemoryPrivilege` is enabled,
+so the privilege is not the problem. A process restart cannot compact physical memory; only a
+reboot can.
+
+**This corrects a remedy recorded in this file.** "Restart the miner while RAM is free" was
+believed to fix a low huge-page allocation. It does not, at least not on a node that has been up
+for days. Free bytes are not the constraint — contiguous ones are.
+
+Two consequences worth carrying:
+
+- **Stopping the CPU miner is not free on a long-uptime node.** The pause rule hands a game back
+  2.2 GB and fourteen cores, and may charge 40% of the hashrate for it afterwards. Worth it while
+  somebody is playing; expensive if the node then mines for days in that state.
+- **The agent reports the resume as a success**, because the miner did start. Nothing notices that
+  it started crippled. That is the failure mode this project likes least: a node running at 60%
+  with nobody told.
+
+Also noticed while measuring: `xmrig-fleet-agent` itself held **716 MB** of working set on this
+node. LibreHardwareMonitor is the obvious suspect and nothing has been proven; it is a lot for an
+agent on a 16 GB machine.
 
 ##### Stopping the CPU miner for a game — `desktop-ib88isg`, 2026-09-08, 10:47
 

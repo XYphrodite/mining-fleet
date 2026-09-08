@@ -757,6 +757,17 @@ xmrig-fleet/
   LibreHardwareMonitor, which is what the agent uses. **NVAPI has it.** So this fleet's previous
   "~110 W uncounted" was wrong twice over: the figure exists, and it is about 20 W lower than the
   guess. Reaching it from the agent means calling NVAPI directly, which nothing here does yet.
+- **Stopping the CPU miner can cost its huge pages, and a restart does not get them back.**
+  Measured on `desktop-ib88isg` on 2026-09-08: the pause rule stopped the miner for a game and it
+  resumed afterwards with **142 huge pages of 1182**, running 3,650 H/s against a healthy 6,273.
+  An explicit restart four hours later, with 4.4 GB free, got **exactly 142 again**. The same
+  number from two independent starts is the amount of contiguous physical memory the machine can
+  still offer after 4.6 days of uptime and 1.45 GB of non-relocatable kernel pool;
+  `SeLockMemoryPrivilege` is enabled, so the privilege is not it. Only a reboot compacts physical
+  memory. This corrects the remedy recorded elsewhere in this project — "restart the miner while
+  RAM is free" — because free bytes are not the constraint, contiguous ones are. Worse, the agent
+  reports such a resume as a success, since the miner did start; nothing notices it started
+  crippled, which is exactly the silent-slow-node failure this project exists to prevent.
 - **Lowering the miner's priority is a switch, not a dial, on a hybrid CPU.** Dropped to
   `BelowNormal` on `mks68i7rtx` (i7-12700KF), Windows 11 read the miner as background work and
   parked it on the four E-cores: **7,126 H/s became 1,058**, an 85% loss, with the eight P-cores
