@@ -625,6 +625,17 @@ xmrig-fleet/
       live miner without restarting it: **`BelowNormal` cost 85%** (7,126 → 1,058 H/s, Windows
       parking it on the E-cores), while **freeing two P-cores by affinity cost 7%** (7,126 → 6,642)
       and the operator confirmed the stutter gone. Huge pages stayed at 1180/1180 throughout
+- [x] **CPU mining stops for a named game, and the memory is the point.** `desktop-ib88isg` on
+      1.16.0 with CS2 running. Before: 14 mining threads, 3,377 H/s, and a per-core split reading
+      `100 70 100 57 100 48 100 49 …` — the miner holding one thread of all fourteen physical
+      cores while the game ran on their hyperthread siblings, the same arrangement that made a
+      game unplayable on `mks68i7rtx`. Pushing `{ processNames: ["cs2"], quietSeconds: 300 }`
+      stopped the miner **within six seconds** — `10:47:11 miner paused, cs2 is running` in the
+      node's own record — and memory went from **90% used with 1,598 MB free to 77% with 3,788 MB
+      free**. That 2,190 MB is the RandomX dataset handed back, which is why this stops rather
+      than throttles: a capped miner keeps every byte of it. `minerStoppedByPause` survived the
+      agent restart that followed, so the node will not start mining under the player after a
+      reboot
 - [x] **The temperature ceiling governs a live node, in both directions.** `mks68i7rtx` on
       1.15.0, holding 8 threads at 88 °C under a 90 °C ceiling. Lowering the ceiling to 80 °C made
       it act twice and then stop on its own, and its own record names the reason each time:
@@ -665,15 +676,6 @@ xmrig-fleet/
       across the restart, and the pushed pause rule survived the update on `mks68i7rtx`
 
 ### Implemented, Not Yet Verified Live ⏳
-- [ ] **Stopping CPU mining for a named program.** `pauseWhile` on the CPU miner, sharing the
-      card's rule, its observations and its asymmetry. Prompted by `desktop-ib88isg`: measured
-      while CS2 was running, the per-core split read
-      `100 70 100 57 100 48 100 49 …` — the miner holding one thread of all fourteen physical
-      cores and the game left on their hyperthread siblings, exactly the arrangement that made a
-      game unplayable on `mks68i7rtx`. It stops rather than throttles because every partial
-      measure is a poor trade here and because a stopped miner also hands back the 2.3 GB of huge
-      pages that a 16 GB node needs. Unit-tested, including that autostart and the throttle each
-      leave a miner this stopped alone; no node has yet been watched standing down for a game
 - [ ] **A reserved core surviving a reboot.** Everything up to that is verified (see above): the
       setting is stored on the node, and the service re-applies it within six seconds of the mask
       being taken away. What nobody has watched is `mks68i7rtx` coming back from a cold boot with

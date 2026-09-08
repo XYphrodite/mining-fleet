@@ -171,6 +171,32 @@ The same output, ten degrees cooler. Affinity moves the same work onto fewer cor
 the heat; fewer threads do less work and spread what remains. `reservedCores` is the right shape for
 handing a person a core to type on, and the wrong one for temperature.
 
+##### Stopping the CPU miner for a game — `desktop-ib88isg`, 2026-09-08, 10:47
+
+The Xeon has 16 GB and 28 threads, and somebody plays CS2 on it. With the miner running, the
+per-core split read the same shape that made a game unplayable on the i7:
+
+```
+100 70 100 57 100 48 100 49 100 53 100 50 100 54 100 65 100 69 100 64 100 53 100 51 100 46 100 52
+└──────── one mining thread on each of 14 physical cores ────────┘
+```
+
+CS2 was running entirely on hyperthread siblings of saturated RandomX cores. The node's hashrate
+had fallen from 6,273 to 3,377 H/s, and memory was at 90%.
+
+`pauseWhile: { processNames: ["cs2"], quietSeconds: 300 }` stopped the miner **six seconds** after
+the rule landed:
+
+| | Mining | Stopped for the game |
+|---|---:|---:|
+| Memory used | 90% | **77%** |
+| Memory free | 1,598 MB | **3,788 MB** |
+
+**2,190 MB came back** — the RandomX dataset in huge pages. That figure is the argument for
+stopping rather than throttling: a capped miner keeps all of it, and on a 16 GB machine running a
+game it is most of what makes the box feel slow. The flag survived the agent restart, so a reboot
+mid-session will not start mining under the player.
+
 ##### The ceiling governing itself — 2026-09-07, 07:24
 
 `maxCpuTemperatureC` driven on the live node, agent 1.15.0. Holding 8 threads at 88 °C under a
