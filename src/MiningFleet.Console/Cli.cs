@@ -11,7 +11,7 @@ namespace MiningFleet.Console;
 public static class Cli
 {
     public const string Usage = """
-        xmrig-fleet [command] [node ...]
+        mining-fleet [command] [node ...]
 
           (no command)   interactive console
           status         print the fleet table once
@@ -20,7 +20,7 @@ public static class Cli
           restart        restart mining
           economics      cost, income and profit summary
           pool           pool and wallet balance
-          update         download and install a newer xmrig-fleet
+          update         download and install a newer mining-fleet
           upgrade-agents update the agent on the nodes themselves
           throttle       show, push or pin the mining power limit
           autostart      show or set whether a node mines as soon as it boots
@@ -92,7 +92,7 @@ public static class Cli
                 return await GpuAsync(config, fleet, names, ct);
 
             case "version" or "--version" or "v":
-                AnsiConsole.WriteLine($"xmrig-fleet {UpdateService.CurrentVersion}");
+                AnsiConsole.WriteLine($"mining-fleet {UpdateService.CurrentVersion}");
                 return 0;
 
             case "help" or "h" or "?":

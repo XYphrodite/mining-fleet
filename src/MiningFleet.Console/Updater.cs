@@ -25,7 +25,7 @@ public static class Updater
 
         if (update is null)
         {
-            AnsiConsole.MarkupLine($"[green]xmrig-fleet {UpdateService.CurrentVersion} is the latest release.[/]");
+            AnsiConsole.MarkupLine($"[green]mining-fleet {UpdateService.CurrentVersion} is the latest release.[/]");
             return 0;
         }
 
@@ -116,8 +116,8 @@ public static class Updater
             if (await service.CheckAsync(timeout.Token) is { } update)
             {
                 AnsiConsole.MarkupLine(
-                    $"[yellow]xmrig-fleet {update.Version} is available[/] [grey](running {UpdateService.CurrentVersion}) - " +
-                    "run 'xmrig-fleet update'[/]");
+                    $"[yellow]mining-fleet {update.Version} is available[/] [grey](running {UpdateService.CurrentVersion}) - " +
+                    "run 'mining-fleet update'[/]");
             }
         }
         catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or TaskCanceledException or OperationCanceledException)

@@ -2,8 +2,8 @@
 
 Консольное управление майнингом на всех ПК пула через tailnet.
 
-Команды и установленные файлы пока называются `xmrig-fleet` и `xmrig-fleet-agent` —
-так они стоят на живых нодах; переименование поставки отдельным шагом.
+Команда — `mining-fleet`; `xmrig-fleet` остаётся копией того же файла. Агент на нодах
+пока `xmrig-fleet-agent`.
 
 Две части:
 
@@ -29,7 +29,7 @@ tailnet (`100.64.0.0/10`), и дополнительно защищён общи
 | Стоимость майнинга и планируемый доход | Economics |
 | Состояние hashvault и баланс кошелька | Pool & wallet |
 | Автоматическое ограничение мощности, когда за ПК работают | Miner control → Power limit |
-| Майнинг на видеокарте, с паузой когда карта нужна человеку | Dashboard, `xmrig-fleet gpu` |
+| Майнинг на видеокарте, с паузой когда карта нужна человеку | Dashboard, `mining-fleet gpu` |
 
 ### Как ходить по меню
 
@@ -53,12 +53,12 @@ Escape работает **в меню, но не в полях ввода**. Т�
 irm https://raw.githubusercontent.com/XYphrodite/xmrig-fleet/master/deploy/install.ps1 | iex
 ```
 
-Скачает последний релиз, распакует в `%LOCALAPPDATA%\Programs\xmrig-fleet` и пропишет PATH.
+Скачает последний релиз, распакует в `%LOCALAPPDATA%\Programs\mining-fleet` и пропишет PATH.
 Дальше консоль обновляет себя сама:
 
 ```powershell
-xmrig-fleet update          # поставить свежий релиз
-xmrig-fleet update --check  # только проверить; код возврата 1, если есть новее
+mining-fleet update          # поставить свежий релиз
+mining-fleet update --check  # только проверить; код возврата 1, если есть новее
 ```
 
 ## Установка агентов на ноды
@@ -66,7 +66,7 @@ xmrig-fleet update --check  # только проверить; код возвр
 На каждой майнящей машине, из PowerShell **от администратора**:
 
 ```powershell
-$env:XMRIG_FLEET_TOKEN = 'ваш-общий-секрет'
+$env:MINING_FLEET_TOKEN = 'ваш-общий-секрет'
 irm https://raw.githubusercontent.com/XYphrodite/xmrig-fleet/master/deploy/install-agent.ps1 | iex
 ```
 
@@ -93,7 +93,7 @@ irm https://raw.githubusercontent.com/XYphrodite/xmrig-fleet/master/deploy/insta
 ## Конфигурация
 
 Консоль хранит `fleet.json` рядом с бинарником (путь можно переопределить переменной
-`XMRIG_FLEET_CONFIG`):
+`MINING_FLEET_CONFIG` или старой `XMRIG_FLEET_CONFIG`):
 
 ```json
 {
@@ -133,17 +133,17 @@ irm https://raw.githubusercontent.com/XYphrodite/xmrig-fleet/master/deploy/insta
 Те же операции доступны командами — удобно для планировщика:
 
 ```
-xmrig-fleet status              # таблица состояния, код возврата 1 если нода недоступна
-xmrig-fleet start [нода ...]
-xmrig-fleet stop  [нода ...]
-xmrig-fleet restart
-xmrig-fleet economics
-xmrig-fleet pool
-xmrig-fleet update              # код возврата 2 при ошибке обновления
-xmrig-fleet throttle            # на какой ступени мощности каждая нода и почему
-xmrig-fleet autostart           # что нода делает при загрузке; --on / --off меняют
-xmrig-fleet gpu                 # что майнит каждая видеокарта; --sync / --start / --stop
-xmrig-fleet version
+mining-fleet status              # таблица состояния, код возврата 1 если нода недоступна
+mining-fleet start [нода ...]
+mining-fleet stop  [нода ...]
+mining-fleet restart
+mining-fleet economics
+mining-fleet pool
+mining-fleet update              # код возврата 2 при ошибке обновления
+mining-fleet throttle            # на какой ступени мощности каждая нода и почему
+mining-fleet autostart           # что нода делает при загрузке; --on / --off меняют
+mining-fleet gpu                 # что майнит каждая видеокарта; --sync / --start / --stop
+mining-fleet version
 ```
 
 ## Автозапуск майнинга при загрузке ноды
@@ -153,9 +153,9 @@ xmrig-fleet version
 некому. Включается это в **Miner control → Start mining when the node boots** или командой:
 
 ```
-xmrig-fleet autostart               # что настроено сейчас на каждой ноде
-xmrig-fleet autostart --on          # майнить сразу после старта агента
-xmrig-fleet autostart --off rig-2   # только этой ноде — ждать команды
+mining-fleet autostart               # что настроено сейчас на каждой ноде
+mining-fleet autostart --on          # майнить сразу после старта агента
+mining-fleet autostart --off rig-2   # только этой ноде — ждать команды
 ```
 
 Настройка хранится на самой ноде и переживает обновление агента. Что важно знать:
@@ -166,7 +166,7 @@ xmrig-fleet autostart --off rig-2   # только этой ноде — жда�
 - Нода, которой ничего не говорили, показывает `unset` и живёт по своему `appsettings.json` —
   это не то же самое, что выключённый автозапуск.
 - Если нода отвечает `this agent is too old to autostart`, обновите агент:
-  `xmrig-fleet upgrade-agents`.
+  `mining-fleet upgrade-agents`.
 
 ## Ограничение мощности, когда за ПК работают
 
@@ -207,11 +207,11 @@ xmrig-fleet autostart --off rig-2   # только этой ноде — жда�
 останавливать: перезапуск может не получить huge pages, а это на RandomX дороже всего.
 
 ```
-xmrig-fleet throttle                    # где каждая нода и почему
-xmrig-fleet throttle --sync             # разослать правила из fleet.json
-xmrig-fleet throttle rig-2 --set=50     # прибить 50% руками, автоматика отключается
-xmrig-fleet throttle rig-2 --auto       # вернуть управление автоматике
-xmrig-fleet throttle rig-2 --log        # что нода решала и по каким показаниям
+mining-fleet throttle                    # где каждая нода и почему
+mining-fleet throttle --sync             # разослать правила из fleet.json
+mining-fleet throttle rig-2 --set=50     # прибить 50% руками, автоматика отключается
+mining-fleet throttle rig-2 --auto       # вернуть управление автоматике
+mining-fleet throttle rig-2 --log        # что нода решала и по каким показаниям
 ```
 
 ### Сколько стоит ступень
@@ -249,7 +249,7 @@ xmrig-fleet throttle rig-2 --log        # что нода решала и по �
 2026-09-05 16:12      50 -> 25  cpu=91.2% other=66.0% (7.9 of 12 threads) miner=25.2% mem=79%  ...
 ```
 
-Читается тем же `xmrig-fleet throttle --log`.
+Читается тем же `mining-fleet throttle --log`.
 
 **Зачем и среднее, и пик.** Загрузка, которая жала восемь секунд и отпустила на пятьдесят две, в
 среднем выглядит скромно — а это ровно та картина, из-за которой человек тянется выключить
@@ -312,10 +312,10 @@ RX 6500 XT с 4 ГБ его просто не потянет — карта от
 достраивает.
 
 ```
-xmrig-fleet gpu                 # что майнит каждая карта, сколько шар и на каком пуле
-xmrig-fleet gpu --sync          # разослать настройки из fleet.json
-xmrig-fleet gpu rig-2 --start   # запустить карту
-xmrig-fleet gpu rig-2 --stop    # остановить (процессорный майнер продолжит работать)
+mining-fleet gpu                 # что майнит каждая карта, сколько шар и на каком пуле
+mining-fleet gpu --sync          # разослать настройки из fleet.json
+mining-fleet gpu rig-2 --start   # запустить карту
+mining-fleet gpu rig-2 --stop    # остановить (процессорный майнер продолжит работать)
 ```
 
 ### Майнер уходит, пока человек за машиной
@@ -354,7 +354,7 @@ xmrig-fleet gpu rig-2 --stop    # остановить (процессорный
 
 ### Потолки: нагрузка и температура
 
-Две настройки ноды, обе едут вместе с троттлингом — `xmrig-fleet throttle <нода> --sync`.
+Две настройки ноды, обе едут вместе с троттлингом — `mining-fleet throttle <нода> --sync`.
 
 ```json
 { "name": "rig-2", "host": "100.100.10.12",
@@ -409,7 +409,7 @@ xmrig-fleet gpu rig-2 --stop    # остановить (процессорный
 ядро, а не экономичное. Отдаётся ядро целиком: половинка гипертрединга делит исполнительные блоки
 с потоком RandomX и полноценным ядром не является.
 
-Настройка едет на ноду вместе с троттлингом — `xmrig-fleet throttle <нода> --sync`. Агент держит её
+Настройка едет на ноду вместе с троттлингом — `mining-fleet throttle <нода> --sync`. Агент держит её
 применённой сам, раз в пять секунд: аффинити умирает вместе с процессом, так что майнер,
 перезапущенный кем угодно, иначе вернулся бы владеющим всей машиной.
 
@@ -478,7 +478,7 @@ Cuckaroo29 выделяет свои 6,9 ГБ один раз и не отдаё
   `"runInInteractiveSession": true`, и агент пока честно отвечает отказом вместо того, чтобы
   сделать вид, что запустил.
 - Если нода отвечает `this agent is too old to mine on the GPU`, обновите агент:
-  `xmrig-fleet upgrade-agents`.
+  `mining-fleet upgrade-agents`.
 
 ### Сколько заработала карта
 

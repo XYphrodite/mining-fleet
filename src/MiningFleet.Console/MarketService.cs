@@ -59,7 +59,7 @@ public sealed class MarketService : IDisposable
     public MarketService(FleetConfig config)
     {
         _config = config;
-        _http.DefaultRequestHeaders.UserAgent.ParseAdd("xmrig-fleet-console");
+        _http.DefaultRequestHeaders.UserAgent.ParseAdd("mining-fleet-console");
     }
 
     public async Task<PoolWalletStats?> GetWalletStatsAsync(CancellationToken ct)

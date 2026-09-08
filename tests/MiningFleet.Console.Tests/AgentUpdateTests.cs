@@ -14,27 +14,46 @@ public sealed class AgentUpdateTests
     [Fact]
     public void The_wanted_asset_names_the_agent_not_the_console()
     {
-        Assert.StartsWith("xmrig-fleet-agent-", AgentUpdateService.AssetName);
+        Assert.StartsWith("mining-fleet-agent-", AgentUpdateService.AssetName);
         Assert.EndsWith(".zip", AgentUpdateService.AssetName);
+    }
+
+    [Fact]
+    public void A_release_with_both_names_picks_the_new_agent_zip()
+    {
+        string[] assets =
+        [
+            "mining-fleet-win-x64.zip",
+            "xmrig-fleet-win-x64.zip",
+            "xmrig-fleet-agent-win-x64.zip",
+            "mining-fleet-agent-win-x64.zip",
+        ];
+
+        Assert.Equal("mining-fleet-agent-win-x64.zip", AgentUpdateService.PickAsset(assets));
+    }
+
+    [Fact]
+    public void A_legacy_only_release_still_updates_the_agent()
+    {
+        string[] assets = ["xmrig-fleet-win-x64.zip", "xmrig-fleet-agent-win-x64.zip"];
+
+        Assert.Equal("xmrig-fleet-agent-win-x64.zip", AgentUpdateService.PickAsset(assets));
     }
 
     [Fact]
     public void The_console_asset_is_not_an_acceptable_match()
     {
-        // What a real release contains. The console zip is a prefix of nothing, but the agent
-        // name contains the console name, so a fragment match in either direction is a trap.
-        string[] assets = ["xmrig-fleet-win-x64.zip", "xmrig-fleet-agent-win-x64.zip"];
+        // The agent name contains the console name, so a fragment match in either direction is a trap.
+        string[] assets = ["xmrig-fleet-win-x64.zip", "mining-fleet-win-x64.zip"];
 
-        var matches = assets.Where(a => a.Equals(AgentUpdateService.AssetName, StringComparison.OrdinalIgnoreCase)).ToList();
-
-        Assert.Single(matches);
-        Assert.Contains("agent", matches[0]);
+        Assert.Null(AgentUpdateService.PickAsset(assets));
     }
 
     [Fact]
     public void The_two_sides_never_want_the_same_asset()
     {
         Assert.NotEqual(UpdateService.AssetName, AgentUpdateService.AssetName);
+        Assert.Empty(UpdateService.AssetNames.Intersect(AgentUpdateService.AssetNames, StringComparer.OrdinalIgnoreCase));
     }
 
     [Theory]

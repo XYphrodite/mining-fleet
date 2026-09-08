@@ -29,7 +29,7 @@ public sealed class UpdateService : IDisposable
         _config = config;
         _http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
         // The GitHub API rejects requests without a User-Agent.
-        _http.DefaultRequestHeaders.UserAgent.ParseAdd($"xmrig-fleet/{CurrentVersion}");
+        _http.DefaultRequestHeaders.UserAgent.ParseAdd($"mining-fleet/{CurrentVersion}");
         if (!string.IsNullOrWhiteSpace(config.Token))
             _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", config.Token);
     }
@@ -62,7 +62,7 @@ public sealed class UpdateService : IDisposable
 
         var asset = FindAsset(doc.RootElement);
         if (asset is null)
-            throw new InvalidOperationException($"Release {tag} carries no '{AssetName}'.");
+            throw new InvalidOperationException($"Release {tag} carries no '{string.Join("' or '", AssetNames)}'.");
 
         var notes = doc.RootElement.TryGetProperty("body", out var b) ? b.GetString() : null;
         return asset with { Version = released, Tag = tag, Notes = notes };
@@ -74,8 +74,8 @@ public sealed class UpdateService : IDisposable
     /// </summary>
     public async Task<string> ApplyAsync(UpdateInfo update, Action<long, long?> onProgress, CancellationToken ct)
     {
-        var archive = Path.Combine(Path.GetTempPath(), $"xmrig-fleet-{update.Tag}-{Guid.NewGuid():N}.zip");
-        var unpacked = Path.Combine(Path.GetTempPath(), $"xmrig-fleet-{Guid.NewGuid():N}");
+        var archive = Path.Combine(Path.GetTempPath(), $"mining-fleet-{update.Tag}-{Guid.NewGuid():N}.zip");
+        var unpacked = Path.Combine(Path.GetTempPath(), $"mining-fleet-{Guid.NewGuid():N}");
 
         try
         {
@@ -85,7 +85,7 @@ public sealed class UpdateService : IDisposable
             ZipFile.ExtractToDirectory(archive, unpacked, overwriteFiles: true);
 
             var replaced = SwapIntoPlace(unpacked, InstallDirectory);
-            return $"Updated to {update.Tag} ({replaced} file(s)). Restart xmrig-fleet to run the new version.";
+            return $"Updated to {update.Tag} ({replaced} file(s)). Restart mining-fleet to run the new version.";
         }
         finally
         {
@@ -161,46 +161,38 @@ public sealed class UpdateService : IDisposable
         }
     }
 
+    /// <summary>Preferred console zip, e.g. mining-fleet-win-x64.zip. See <see cref="AssetNames"/>.</summary>
+    public static string AssetName => AssetNames[0];
+
     /// <summary>
-    /// The one asset this console may install, e.g. xmrig-fleet-win-x64.zip.
-    ///
-    /// Matched in full rather than by fragment: a release also carries
-    /// xmrig-fleet-agent-win-x64.zip, and a substring match on the platform would happily
-    /// unpack the node agent over the console.
+    /// Console zip names, new then legacy. Matched in full rather than by fragment: a release
+    /// also carries the agent zip, and a substring match would unpack it over the console.
     /// </summary>
-    public static string AssetName
-    {
-        get
-        {
-            var os = OperatingSystem.IsWindows() ? "win" : OperatingSystem.IsMacOS() ? "osx" : "linux";
-            var arch = System.Runtime.InteropServices.RuntimeInformation.OSArchitecture switch
-            {
-                System.Runtime.InteropServices.Architecture.Arm64 => "arm64",
-                System.Runtime.InteropServices.Architecture.X64 => "x64",
-                var other => other.ToString().ToLowerInvariant(),
-            };
-            return $"xmrig-fleet-{os}-{arch}.zip";
-        }
-    }
+    public static IReadOnlyList<string> AssetNames => MiningFleet.Contracts.ReleaseAssets.ConsoleZipNames;
+
+    public static string? PickAsset(IEnumerable<string?> available) =>
+        MiningFleet.Contracts.ReleaseAssets.Pick(AssetNames, available);
 
     private static UpdateInfo? FindAsset(JsonElement release)
     {
         if (!release.TryGetProperty("assets", out var assets) || assets.ValueKind != JsonValueKind.Array)
             return null;
 
+        var names = new List<(string Name, string Url, long Size)>();
         foreach (var asset in assets.EnumerateArray())
         {
             var name = asset.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
-            if (!name.Equals(AssetName, StringComparison.OrdinalIgnoreCase)) continue;
-
             var url = asset.TryGetProperty("browser_download_url", out var u) ? u.GetString() : null;
             if (url is null) continue;
-
             var size = asset.TryGetProperty("size", out var s) && s.ValueKind == JsonValueKind.Number ? s.GetInt64() : 0;
-            return new UpdateInfo(new Version(0, 0), "", name, url, size, null);
+            names.Add((name, url, size));
         }
 
-        return null;
+        var picked = PickAsset(names.Select(a => a.Name));
+        if (picked is null) return null;
+
+        var match = names.First(a => a.Name.Equals(picked, StringComparison.OrdinalIgnoreCase));
+        return new UpdateInfo(new Version(0, 0), "", match.Name, match.Url, match.Size, null);
     }
 
     private static bool TryParseVersion(string tag, out Version version) =>

@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.IO.Compression;
 using System.Net.Http.Headers;
 using System.Reflection;
-using System.Runtime.InteropServices;
 using System.Text.Json;
 using MiningFleet.Contracts;
 
@@ -82,7 +81,7 @@ public sealed class AgentUpdateService
             {
                 var asset = await ResolveAssetAsync(http, request.Version, ct);
                 if (asset is null)
-                    return new AgentUpdateResultDto(false, $"No release asset named {AssetName} was found.", from, null, false);
+                    return new AgentUpdateResultDto(false, $"No release asset named {string.Join(" or ", AssetNames)} was found.", from, null, false);
 
                 (url, tag) = asset.Value;
 
@@ -240,15 +239,20 @@ public sealed class AgentUpdateService
 
             if (!release.TryGetProperty("assets", out var assets) || assets.ValueKind != JsonValueKind.Array) continue;
 
+            var available = new List<(string Name, string Url)>();
             foreach (var asset in assets.EnumerateArray())
             {
                 var name = asset.TryGetProperty("name", out var n) ? n.GetString() : null;
-                // Matched in full: a release also carries the console zip, and a fragment match
-                // would happily unpack the console over this agent.
-                if (!string.Equals(name, AssetName, StringComparison.OrdinalIgnoreCase)) continue;
-
                 var url = asset.TryGetProperty("browser_download_url", out var u) ? u.GetString() : null;
-                if (url is not null) return (url, tag);
+                if (name is null || url is null) continue;
+                available.Add((name, url));
+            }
+
+            var picked = PickAsset(available.Select(a => a.Name));
+            if (picked is not null)
+            {
+                var match = available.First(a => a.Name.Equals(picked, StringComparison.OrdinalIgnoreCase));
+                return (match.Url, tag);
             }
 
             if (wanted is not null) return null;
@@ -257,21 +261,17 @@ public sealed class AgentUpdateService
         return null;
     }
 
-    /// <summary>The one asset this agent may install, e.g. xmrig-fleet-agent-win-x64.zip.</summary>
-    public static string AssetName
-    {
-        get
-        {
-            var os = OperatingSystem.IsWindows() ? "win" : OperatingSystem.IsMacOS() ? "osx" : "linux";
-            var arch = RuntimeInformation.OSArchitecture switch
-            {
-                Architecture.Arm64 => "arm64",
-                Architecture.X64 => "x64",
-                var other => other.ToString().ToLowerInvariant(),
-            };
-            return $"xmrig-fleet-agent-{os}-{arch}.zip";
-        }
-    }
+    /// <summary>Preferred agent zip, e.g. mining-fleet-agent-win-x64.zip. See <see cref="AssetNames"/>.</summary>
+    public static string AssetName => AssetNames[0];
+
+    /// <summary>
+    /// Agent zip names, new then legacy. Matched in full: a release also carries the console zip,
+    /// and a fragment match would unpack it over this agent.
+    /// </summary>
+    public static IReadOnlyList<string> AssetNames => ReleaseAssets.AgentZipNames;
+
+    public static string? PickAsset(IEnumerable<string?> available) =>
+        ReleaseAssets.Pick(AssetNames, available);
 
     /// <summary>Assembly versions carry four parts, release tags three: compare what both have.</summary>
     public static bool IsSameVersion(string assemblyVersion, string? tag)

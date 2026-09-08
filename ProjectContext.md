@@ -9,11 +9,11 @@ XMRig on demand; a Spectre.Console TUI on the operator machine polls the whole f
 prices the electricity it burns, and reads the pool balance from Hashvault. The agent
 also drives lolMiner on nodes that mine a GPU coin.
 
-The product name is mining-fleet. Installed binaries (`xmrig-fleet.exe`,
-`xmrig-fleet-agent.exe`), the Windows service, release zip names and the GitHub
-repository `XYphrodite/xmrig-fleet` stay as they are until a later identity migration:
-`upgrade-agents` looks those names up exactly, and a hard cut would leave a node
-mining with no agent.
+The product name is mining-fleet. The console ships as `mining-fleet.exe` with
+`xmrig-fleet.exe` as a copy of the same file; release zips are published under both
+names so an older console can still self-update. The agent executable, Windows
+service and GitHub repository `XYphrodite/xmrig-fleet` stay as they are until a later
+cut: `upgrade-agents` still has to find `xmrig-fleet-agent.exe` on the node.
 
 **Platform**: .NET 8 (`net8.0`), Windows 10/11 today, Linux-ready
 **Language**: C# 12
@@ -28,7 +28,7 @@ mining with no agent.
 | Layer | Technology | Notes |
 |-------|-----------|-------|
 | Node agent | ASP.NET Core Minimal API (`net8.0`) | `xmrig-fleet-agent.exe`, Kestrel on `0.0.0.0:47800` |
-| Operator console | .NET 8 console + Spectre.Console | `xmrig-fleet.exe`, interactive TUI **and** one-shot commands |
+| Operator console | .NET 8 console + Spectre.Console | `mining-fleet.exe` (`xmrig-fleet.exe` shim), interactive TUI **and** one-shot commands |
 | Shared contracts | .NET 8 class library | DTOs referenced by both sides |
 | Transport | Plain HTTP over the tailnet | Shared-secret header, no TLS (see **Security Model**) |
 | Service hosting | Windows Service / systemd | Same binary, both hosts registered unconditionally |
@@ -77,7 +77,7 @@ API enabled, so hashrate never has to be scraped from stdout.
 ```
   OPERATOR MACHINE
   +-----------------------------------------------------------+
-  |  xmrig-fleet.exe   (Spectre.Console TUI + one-shot CLI)    |
+  |  mining-fleet.exe  (Spectre.Console TUI + one-shot CLI)    |
   |    Dashboard | Miner control | Nodes | Hardware            |
   |    Economics | Pool & wallet | Settings                    |
   |                                                           |
@@ -190,7 +190,7 @@ hardware.
 | `GpuPauseRule` | The stand-down rule itself, pure and clock-injected, and the part the tests drive. Both halves are here: which conditions are met (`Evaluate`) and how long the card waits before coming back |
 
 ### 2. **MiningFleet.Console**
-**Type**: Console application -> `xmrig-fleet.exe`
+**Type**: Console application -> `mining-fleet.exe` (shim `xmrig-fleet.exe`)
 **Location**: `src/MiningFleet.Console/`
 **Purpose**: The operator interface — a Spectre.Console TUI, plus one-shot commands for
 unattended use.
@@ -209,7 +209,7 @@ install/push/autostart/logs), `NodesScreen` (discover/add/edit/test), `HardwareS
 | `GpuPoolService` | What a card actually earned, which Hashvault cannot answer because the card mines another coin. Reads Kryptex, works the pool and address out of the node's own GPU settings, and takes its daily rate from payments the pool really made rather than from a counter |
 | `Economics` | Electricity cost, expected income, per-node profit split |
 | `TailscaleService` | Parses `tailscale status --json` for node discovery, storing the MagicDNS name rather than the address when this machine resolves it |
-| `FleetConfig` | `fleet.json` load/save (override with `XMRIG_FLEET_CONFIG`) |
+| `FleetConfig` | `fleet.json` load/save (override with `MINING_FLEET_CONFIG` or `XMRIG_FLEET_CONFIG`) |
 | `UpdateService` | GitHub release lookup, streaming download, in-place file swap |
 | `Updater` | The `update` command, its progress bar, and the start-up "newer version" notice |
 
@@ -363,7 +363,7 @@ ten seconds evicts it — the next question then waits for a reload instead of b
 ```
 
 `AutoStartMiner` here is only the installed default. Once an operator sets autostart from the
-console — **Miner control → Start mining when the node boots**, or `xmrig-fleet autostart --on` —
+console — **Miner control → Start mining when the node boots**, or `mining-fleet autostart --on` —
 the answer lives in that node's `miner.json` and this value stops being consulted. The setting
 belongs in the console because it decides whether a node that came back on its own returns to
 work or sits idle until somebody notices, and that is a fleet-wide judgement, not an install-time
@@ -412,9 +412,10 @@ event log: the agent stopped writing there after a node whose Event Log service 
 irm https://raw.githubusercontent.com/XYphrodite/xmrig-fleet/master/deploy/install.ps1 | iex
 ```
 
-Unpacks the newest release into `%LOCALAPPDATA%\Programs\xmrig-fleet` and puts it on PATH.
+Unpacks the newest release into `%LOCALAPPDATA%\Programs\mining-fleet` (or the existing
+`Programs\xmrig-fleet` folder, so a re-run does not fork the install) and puts it on PATH.
 No administrator rights: this is the operator machine, not a mining node. Afterwards the
-console updates itself with `xmrig-fleet update`.
+console updates itself with `mining-fleet update`.
 
 [deploy/release.ps1](deploy/release.ps1) builds, packages and publishes a release; the tag
 stamps the assembly version, which is what `update` compares against.
@@ -422,18 +423,18 @@ stamps the assembly version, which is what `update` compares against.
 ### One-shot commands
 
 ```bash
-xmrig-fleet status              # exit 1 if any node is unreachable
-xmrig-fleet start  [node ...]   # no names = every enabled node
-xmrig-fleet stop   [node ...]
-xmrig-fleet restart
-xmrig-fleet economics
-xmrig-fleet pool
-xmrig-fleet update [--check]    # --check reports and exits 1 without installing
-xmrig-fleet upgrade-agents [node ...] [--version=v1.5.0] [--force]
-xmrig-fleet throttle [node ...] [--sync|--set=N|--auto] [--log]
-xmrig-fleet autostart [node ...] [--on|--off]
-xmrig-fleet gpu [node ...] [--sync|--start|--stop]
-xmrig-fleet version
+mining-fleet status              # exit 1 if any node is unreachable
+mining-fleet start  [node ...]   # no names = every enabled node
+mining-fleet stop   [node ...]
+mining-fleet restart
+mining-fleet economics
+mining-fleet pool
+mining-fleet update [--check]    # --check reports and exits 1 without installing
+mining-fleet upgrade-agents [node ...] [--version=v1.5.0] [--force]
+mining-fleet throttle [node ...] [--sync|--set=N|--auto] [--log]
+mining-fleet autostart [node ...] [--on|--off]
+mining-fleet gpu [node ...] [--sync|--start|--stop]
+mining-fleet version
 ```
 
 ---
@@ -466,7 +467,7 @@ mining-fleet/
 │   │   ├── GpuPauseService.cs     # hands the card back while somebody needs it
 │   │   ├── GpuPauseRule.cs        # the stand-down rule itself, pure and clock-injected
 │   │   └── AgentOptions.cs        # options + miner.json store
-│   ├── MiningFleet.Console/        # operator console -> xmrig-fleet.exe
+│   ├── MiningFleet.Console/        # operator console -> mining-fleet.exe
 │   │   ├── Ui/                    # Dashboard, Miner, Nodes, Hardware, Economics, Pool, Settings
 │   │   ├── FleetService.cs        # parallel poll and command fan-out
 │   │   ├── MarketService.cs       # Hashvault + price parsing
@@ -693,7 +694,7 @@ mining-fleet/
       complains about, or whether the interesting events are shorter than that
 - [ ] **Autostart from the console.** Whether a node mines as soon as its agent starts is now a
       pushed per-node setting rather than a hand edit to `appsettings.json` on the machine, with
-      **Miner control → Start mining when the node boots** and `xmrig-fleet autostart` as its
+      **Miner control → Start mining when the node boots** and `mining-fleet autostart` as its
       scriptable twin. Prompted by `desktop-ib88isg`: it lost mains power four times in ten days
       and bugchecked twice, came back on its own every time, and mined nothing afterwards because
       the flag was off and nobody was there to notice. Both sides read the setting back from the
@@ -727,10 +728,11 @@ mining-fleet/
 - [ ] Linux agent: systemd unit, `linux-static-x64` install path, `/sys` sensors
 
 ### Planned 📋
-- [ ] **Finish the rename onto the shipped identity.** Code and docs are `MiningFleet`;
-      binaries, the Windows service, zip names and `XYphrodite/xmrig-fleet` are not.
-      The next cut must keep matching the old asset names for one release, or
-      `upgrade-agents` will not find a payload and a node can be left mining with no agent.
+- [ ] **Finish the rename onto the agent identity.** The console is `mining-fleet.exe`
+      with an `xmrig-fleet.exe` shim, and zips are published under both names. The agent
+      executable, Windows service, install path and GitHub repo are still `xmrig-fleet*`.
+      Changing those without a release that still contains `xmrig-fleet-agent.exe` would
+      leave a node mining with no agent.
 - [ ] **Finish GPU mining out of the CLI.** Four pieces, in the order they hurt: an interactive
       session launcher (without it one node cannot be driven from the console at all), a
       `GpuInstallerService` so lolMiner arrives the way XMRig does, a `GpuScreen` in the TUI, and a

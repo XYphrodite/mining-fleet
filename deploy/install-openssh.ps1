@@ -20,7 +20,7 @@
 
     Authentication is by public key. A password-authenticated SSH server on a mining rig
     is an invitation, and the operator console already reaches these nodes without one.
-    Pass -PublicKey (or set $env:XMRIG_FLEET_SSH_KEY) and the key is installed for
+    Pass -PublicKey (or set $env:MINING_FLEET_SSH_KEY) and the key is installed for
     -UserName. Which file that means is decided by whether the account is an
     administrator: Windows' sshd_config sends every admin login to one shared
     administrators_authorized_keys and ignores that account's own ~\.ssh, so a key
@@ -29,8 +29,8 @@
     Run this in an elevated PowerShell on the node. It can also be run straight from the
     web, which avoids the execution policy that blocks a downloaded .ps1 file:
 
-        $env:XMRIG_FLEET_SSH_KEY  = 'ssh-ed25519 AAAA... operator'
-        $env:XMRIG_FLEET_SSH_USER = 'local'
+        $env:MINING_FLEET_SSH_KEY  = 'ssh-ed25519 AAAA... operator'
+        $env:MINING_FLEET_SSH_USER = 'local'
         irm https://raw.githubusercontent.com/XYphrodite/xmrig-fleet/master/deploy/install-openssh.ps1 | iex
 
     That URL is cached for five minutes, so a node re-run straight after a push can be handed
@@ -48,13 +48,13 @@
 [CmdletBinding()]
 param(
     # Operator's SSH public key, authorised for administrator logins. Falls back to
-    # $env:XMRIG_FLEET_SSH_KEY so the script also works when piped to iex, which cannot
-    # pass arguments.
-    [string]$PublicKey = $env:XMRIG_FLEET_SSH_KEY,
+    # $env:MINING_FLEET_SSH_KEY (or XMRIG_FLEET_SSH_KEY) so the script also works when
+    # piped to iex, which cannot pass arguments.
+    [string]$PublicKey = $(if ($env:MINING_FLEET_SSH_KEY) { $env:MINING_FLEET_SSH_KEY } else { $env:XMRIG_FLEET_SSH_KEY }),
 
     # Account the key logs in as. An elevated shell may be running as a different
     # administrator than the one the operator logs in as, so this is worth naming.
-    [string]$UserName = $(if ($env:XMRIG_FLEET_SSH_USER) { $env:XMRIG_FLEET_SSH_USER } else { $env:USERNAME }),
+    [string]$UserName = $(if ($env:MINING_FLEET_SSH_USER) { $env:MINING_FLEET_SSH_USER } elseif ($env:XMRIG_FLEET_SSH_USER) { $env:XMRIG_FLEET_SSH_USER } else { $env:USERNAME }),
 
     # Leave password authentication on. Off by default: see the description.
     [switch]$AllowPasswordAuth,
@@ -84,7 +84,7 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 }
 
 if ([string]::IsNullOrWhiteSpace($PublicKey) -and -not $AllowPasswordAuth) {
-    throw 'No public key. Pass -PublicKey, set $env:XMRIG_FLEET_SSH_KEY, or accept the risk with -AllowPasswordAuth.'
+    throw 'No public key. Pass -PublicKey, set $env:MINING_FLEET_SSH_KEY, or accept the risk with -AllowPasswordAuth.'
 }
 
 # ---------------------------------------------------------------- install the feature

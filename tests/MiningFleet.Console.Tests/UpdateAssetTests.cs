@@ -12,21 +12,39 @@ public sealed class UpdateAssetTests
     [Fact]
     public void The_wanted_asset_names_the_console_not_the_agent()
     {
-        Assert.StartsWith("xmrig-fleet-", UpdateService.AssetName);
+        Assert.StartsWith("mining-fleet-", UpdateService.AssetName);
         Assert.DoesNotContain("agent", UpdateService.AssetName);
         Assert.EndsWith(".zip", UpdateService.AssetName);
     }
 
     [Fact]
-    public void The_agent_asset_is_not_an_acceptable_match()
+    public void A_release_with_both_names_picks_the_new_console_zip()
     {
-        // What a real release contains.
+        string[] assets =
+        [
+            "mining-fleet-agent-win-x64.zip",
+            "xmrig-fleet-agent-win-x64.zip",
+            "xmrig-fleet-win-x64.zip",
+            "mining-fleet-win-x64.zip",
+        ];
+
+        Assert.Equal("mining-fleet-win-x64.zip", UpdateService.PickAsset(assets));
+    }
+
+    [Fact]
+    public void A_legacy_only_release_still_updates_the_console()
+    {
         string[] assets = ["xmrig-fleet-agent-win-x64.zip", "xmrig-fleet-win-x64.zip"];
 
-        var matches = assets.Where(a => a.Equals(UpdateService.AssetName, StringComparison.OrdinalIgnoreCase)).ToList();
+        Assert.Equal("xmrig-fleet-win-x64.zip", UpdateService.PickAsset(assets));
+    }
 
-        Assert.Single(matches);
-        Assert.DoesNotContain("agent", matches[0]);
+    [Fact]
+    public void The_agent_asset_is_not_an_acceptable_match()
+    {
+        string[] assets = ["xmrig-fleet-agent-win-x64.zip", "mining-fleet-agent-win-x64.zip"];
+
+        Assert.Null(UpdateService.PickAsset(assets));
     }
 
     [Fact]

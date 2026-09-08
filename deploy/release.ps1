@@ -3,10 +3,12 @@
     Builds, packages and publishes a mining-fleet release.
 
 .DESCRIPTION
-    Produces the assets that `deploy\install.ps1` and `xmrig-fleet update` look for:
+    Produces the assets that `deploy\install.ps1` and `mining-fleet update` look for.
+    Each payload is published under both the new name and the xmrig-fleet alias so a
+    console or agent that has not moved yet can still find its zip:
 
-        xmrig-fleet-win-x64.zip         operator console, self-contained
-        xmrig-fleet-agent-win-x64.zip   node agent, self-contained
+        mining-fleet-win-x64.zip / xmrig-fleet-win-x64.zip
+        mining-fleet-agent-win-x64.zip / xmrig-fleet-agent-win-x64.zip
 
     The version comes from the tag: -Version v1.1.0 stamps 1.1.0 into both binaries, so the
     console can compare the release tag against its own assembly version.
@@ -40,7 +42,7 @@ $number = $Version.TrimStart('v')
 # A running agent or console locks its own executable and fails the build. Only processes
 # started out of this repository can lock the build output, so an installed agent service
 # on this machine is deliberately left alone: killing it would stop a production node.
-foreach ($name in 'xmrig-fleet-agent', 'xmrig-fleet') {
+foreach ($name in 'xmrig-fleet-agent', 'mining-fleet', 'xmrig-fleet') {
     Get-Process $name -ErrorAction SilentlyContinue |
         Where-Object { $_.Path -and $_.Path.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) } |
         ForEach-Object {
@@ -53,8 +55,18 @@ if (Test-Path $OutputPath) { Remove-Item $OutputPath -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $OutputPath | Out-Null
 
 $targets = @(
-    @{ Name = 'xmrig-fleet';       Project = 'src\MiningFleet.Console'; Asset = "xmrig-fleet-$Runtime.zip" }
-    @{ Name = 'xmrig-fleet-agent'; Project = 'src\MiningFleet.Agent';   Asset = "xmrig-fleet-agent-$Runtime.zip" }
+    @{
+        Name = 'mining-fleet'
+        Project = 'src\MiningFleet.Console'
+        Assets = @("mining-fleet-$Runtime.zip", "xmrig-fleet-$Runtime.zip")
+        ShimFrom = 'mining-fleet.exe'
+        ShimTo = 'xmrig-fleet.exe'
+    }
+    @{
+        Name = 'xmrig-fleet-agent'
+        Project = 'src\MiningFleet.Agent'
+        Assets = @("mining-fleet-agent-$Runtime.zip", "xmrig-fleet-agent-$Runtime.zip")
+    }
 )
 
 foreach ($t in $targets) {
@@ -70,13 +82,24 @@ foreach ($t in $targets) {
     # Debug symbols are useful locally but only bloat what every operator downloads.
     Get-ChildItem $stage -Filter *.pdb -Recurse | Remove-Item -Force
 
+    if ($t.ShimFrom -and $Runtime -like 'win-*') {
+        $from = Join-Path $stage $t.ShimFrom
+        $to = Join-Path $stage $t.ShimTo
+        if (-not (Test-Path $from)) { throw "Published console is missing $($t.ShimFrom)." }
+        Copy-Item $from $to -Force
+    }
+
     # appsettings.json ships as a template; a real token is written by install-agent.ps1.
-    $archive = Join-Path $OutputPath $t.Asset
-    Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $archive -Force
+    $primary = Join-Path $OutputPath $t.Assets[0]
+    Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $primary -Force
     Remove-Item $stage -Recurse -Force
 
-    $size = [math]::Round((Get-Item $archive).Length / 1MB, 1)
-    Write-Host "    $($t.Asset)  $size MB"
+    foreach ($asset in $t.Assets) {
+        $archive = Join-Path $OutputPath $asset
+        if ($archive -ne $primary) { Copy-Item $primary $archive -Force }
+        $size = [math]::Round((Get-Item $archive).Length / 1MB, 1)
+        Write-Host "    $asset  $size MB"
+    }
 }
 
 if ($SkipPublish) {
@@ -100,4 +123,4 @@ if ($LASTEXITCODE -ne 0) { throw 'gh release create failed' }
 
 Write-Host ''
 Write-Host "Published $Version." -ForegroundColor Green
-Write-Host 'Operators can now run:  xmrig-fleet update'
+Write-Host 'Operators can now run:  mining-fleet update'

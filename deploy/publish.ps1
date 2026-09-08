@@ -35,6 +35,11 @@ if (-not $SkipConsole) {
         -c Release -r $Runtime --self-contained true `
         -o $consoleOut
     if ($LASTEXITCODE -ne 0) { throw 'Console publish failed.' }
+
+    $consoleName = if ($Runtime -like 'win-*') { 'mining-fleet.exe' } else { 'mining-fleet' }
+    $shimName = if ($Runtime -like 'win-*') { 'xmrig-fleet.exe' } else { 'xmrig-fleet' }
+    $consoleExe = Join-Path $consoleOut $consoleName
+    if (Test-Path $consoleExe) { Copy-Item $consoleExe (Join-Path $consoleOut $shimName) -Force }
 }
 
 Write-Host ''

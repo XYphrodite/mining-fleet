@@ -13,7 +13,7 @@
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Version>1.1.2</Version>
-    <AssemblyName>xmrig-fleet</AssemblyName>
+    <AssemblyName>mining-fleet</AssemblyName>
     <RootNamespace>MiningFleet.Console</RootNamespace>
     <InvariantGlobalization>true</InvariantGlobalization>
     <PublishSingleFile>true</PublishSingleFile>

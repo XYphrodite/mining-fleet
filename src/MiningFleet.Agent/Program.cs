@@ -170,7 +170,7 @@ api.MapGet("/gpu/logs", (GpuMinerService gpu) => new LogTailDto("lolminer", gpu.
 api.MapPost("/agent/update", (AgentUpdateRequestDto request, AgentUpdateService updater, CancellationToken ct) =>
     updater.UpdateAsync(request, ct));
 
-app.Logger.LogInformation("xmrig-fleet agent {Version} listening on {Url}", agentVersion, options.ListenUrl);
+app.Logger.LogInformation("mining-fleet agent {Version} listening on {Url}", agentVersion, options.ListenUrl);
 
 // What the operator set from the console wins over what the installer wrote; see
 // MinerConfigStore.ShouldAutoStart. Deciding it here rather than reading options.AutoStartMiner

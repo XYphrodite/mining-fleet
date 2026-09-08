@@ -6,7 +6,7 @@ namespace MiningFleet.Console;
 
 /// <summary>
 /// The whole fleet definition, persisted as fleet.json next to the console binary
-/// (override with the XMRIG_FLEET_CONFIG environment variable).
+/// (override with MINING_FLEET_CONFIG, or the older XMRIG_FLEET_CONFIG).
 /// </summary>
 public sealed class FleetConfig
 {
@@ -62,8 +62,19 @@ public sealed class FleetConfig
     public string Path { get; private set; } = "";
 
     public static string DefaultPath =>
-        Environment.GetEnvironmentVariable("XMRIG_FLEET_CONFIG")
+        FirstEnvironmentVariable("MINING_FLEET_CONFIG", "XMRIG_FLEET_CONFIG")
         ?? System.IO.Path.Combine(AppContext.BaseDirectory, "fleet.json");
+
+    internal static string? FirstEnvironmentVariable(params string[] names)
+    {
+        foreach (var name in names)
+        {
+            var value = Environment.GetEnvironmentVariable(name);
+            if (!string.IsNullOrWhiteSpace(value)) return value;
+        }
+
+        return null;
+    }
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {

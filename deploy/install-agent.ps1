@@ -13,7 +13,7 @@
     Can also be run straight from the web, which avoids the execution policy that blocks a
     downloaded .ps1 file:
 
-        $env:XMRIG_FLEET_TOKEN = '<fleet token>'
+        $env:MINING_FLEET_TOKEN = '<fleet token>'
         irm https://raw.githubusercontent.com/XYphrodite/xmrig-fleet/master/deploy/install-agent.ps1 | iex
 
     In that form the agent payload is downloaded from the newest release automatically.
@@ -24,9 +24,9 @@
 [CmdletBinding()]
 param(
     # Shared secret, must match "token" in the console's fleet.json. Falls back to
-    # $env:XMRIG_FLEET_TOKEN so the script also works when piped to iex, which cannot
-    # pass arguments.
-    [string]$Token = $env:XMRIG_FLEET_TOKEN,
+    # $env:MINING_FLEET_TOKEN (or the older XMRIG_FLEET_TOKEN) so the script also works
+    # when piped to iex, which cannot pass arguments.
+    [string]$Token = $(if ($env:MINING_FLEET_TOKEN) { $env:MINING_FLEET_TOKEN } else { $env:XMRIG_FLEET_TOKEN }),
 
     # Folder holding the published agent. Empty means: fetch the newest release.
     [string]$SourcePath = '',
@@ -48,7 +48,7 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 }
 
 if ([string]::IsNullOrWhiteSpace($Token)) {
-    throw 'No fleet token. Pass -Token, or set $env:XMRIG_FLEET_TOKEN before piping this script to iex.'
+    throw 'No fleet token. Pass -Token, or set $env:MINING_FLEET_TOKEN before piping this script to iex.'
 }
 
 $exeName = 'xmrig-fleet-agent.exe'
@@ -56,14 +56,18 @@ $exeName = 'xmrig-fleet-agent.exe'
 # No payload given: pull the agent for this platform out of the newest release.
 if ([string]::IsNullOrWhiteSpace($SourcePath)) {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    $repo = if ($env:XMRIG_FLEET_REPO) { $env:XMRIG_FLEET_REPO } else { 'XYphrodite/xmrig-fleet' }
+    $repo = if ($env:MINING_FLEET_REPO) { $env:MINING_FLEET_REPO } elseif ($env:XMRIG_FLEET_REPO) { $env:XMRIG_FLEET_REPO } else { 'XYphrodite/xmrig-fleet' }
     $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64' -or $env:PROCESSOR_ARCHITEW6432 -eq 'ARM64') { 'arm64' } else { 'x64' }
-    $assetName = "xmrig-fleet-agent-win-$arch.zip"
+    $assetNames = @("mining-fleet-agent-win-$arch.zip", "xmrig-fleet-agent-win-$arch.zip")
 
-    Write-Host "==> Fetching $assetName from the newest release of $repo"
-    $release = Invoke-RestMethod "https://api.github.com/repos/$repo/releases/latest" -Headers @{ 'User-Agent' = 'xmrig-fleet-agent-installer' } -TimeoutSec 30
-    $asset = $release.assets | Where-Object { $_.name -eq $assetName } | Select-Object -First 1
-    if (-not $asset) { throw "Release $($release.tag_name) carries no $assetName." }
+    Write-Host "==> Fetching agent from the newest release of $repo"
+    $release = Invoke-RestMethod "https://api.github.com/repos/$repo/releases/latest" -Headers @{ 'User-Agent' = 'mining-fleet-agent-installer' } -TimeoutSec 30
+    $asset = $null
+    foreach ($assetName in $assetNames) {
+        $asset = $release.assets | Where-Object { $_.name -eq $assetName } | Select-Object -First 1
+        if ($asset) { break }
+    }
+    if (-not $asset) { throw "Release $($release.tag_name) carries no $($assetNames -join ' or ')." }
 
     $archive = Join-Path ([IO.Path]::GetTempPath()) "xmrig-fleet-agent-$([guid]::NewGuid().ToString('N')).zip"
     $SourcePath = Join-Path ([IO.Path]::GetTempPath()) "xmrig-fleet-agent-$([guid]::NewGuid().ToString('N'))"

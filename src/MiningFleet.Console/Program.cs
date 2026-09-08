@@ -3,7 +3,7 @@ using MiningFleet.Console;
 using MiningFleet.Console.Ui;
 
 System.Console.OutputEncoding = System.Text.Encoding.UTF8;
-System.Console.Title = "xmrig fleet";
+System.Console.Title = "mining-fleet";
 
 FleetConfig config;
 try
