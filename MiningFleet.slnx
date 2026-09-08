@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/MiningFleet.Agent/MiningFleet.Agent.csproj" />
+    <Project Path="src/MiningFleet.Console/MiningFleet.Console.csproj" />
+    <Project Path="src/MiningFleet.Contracts/MiningFleet.Contracts.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/MiningFleet.Console.Tests/MiningFleet.Console.Tests.csproj" />
+  </Folder>
+</Solution>

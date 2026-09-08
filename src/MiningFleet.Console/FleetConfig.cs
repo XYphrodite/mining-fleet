@@ -1,0 +1,435 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using MiningFleet.Contracts;
+
+namespace MiningFleet.Console;
+
+/// <summary>
+/// The whole fleet definition, persisted as fleet.json next to the console binary
+/// (override with the XMRIG_FLEET_CONFIG environment variable).
+/// </summary>
+public sealed class FleetConfig
+{
+    /// <summary>Default X-Fleet-Token, used for every node that does not carry its own.</summary>
+    public string Token { get; set; } = "";
+
+    /// <summary>Port newly added nodes default to.</summary>
+    public int AgentPort { get; set; } = 47800;
+
+    public int PollIntervalSeconds { get; set; } = 5;
+
+    public ElectricityConfig Electricity { get; set; } = new();
+    public PoolConfig Pool { get; set; } = new();
+
+    /// <summary>
+    /// Where to read the XMR spot price when the pool does not publish the configured
+    /// currency. Must return CoinGecko-shaped JSON. `{currency}` is replaced with the
+    /// lower-cased currency code, so the feed is asked for the currency actually in use.
+    /// </summary>
+    public string PriceApiUrl { get; set; } = "https://api.coingecko.com/api/v3/simple/price?ids=monero&vs_currencies={currency}";
+
+    public UpdateConfig Update { get; set; } = new();
+
+    /// <summary>Fleet-wide throttle rules. Individual nodes override parts of this.</summary>
+    public ThrottleConfig Throttle { get; set; } = new();
+
+    /// <summary>
+    /// Physical cores every node holds back for whoever is sitting at it. Usually left at 0 and
+    /// answered per node instead; see <see cref="ReservedCoresFor"/>.
+    /// </summary>
+    public int? ReservedCores { get; set; }
+
+    /// <summary>Fleet-wide ceiling on how much of its own full speed a miner may use, 1-100.</summary>
+    public int? MaxCpuPercent { get; set; }
+
+    /// <summary>Fleet-wide CPU temperature ceiling in Celsius. Usually a per-node answer.</summary>
+    public double? MaxCpuTemperatureC { get; set; }
+
+    /// <summary>
+    /// Fleet-wide rule for stopping CPU mining while somebody is at the machine. Nodes override it.
+    /// </summary>
+    public GpuPauseConfig? PauseWhile { get; set; }
+
+    /// <summary>
+    /// Fleet-wide GPU mining defaults. Mostly a place to keep the pause rule and the pool login;
+    /// the algorithm usually belongs on the node, because it is a property of the card.
+    /// </summary>
+    public GpuMinerConfig GpuMiner { get; set; } = new();
+
+    public List<NodeConfig> Nodes { get; set; } = [];
+
+    [JsonIgnore]
+    public string Path { get; private set; } = "";
+
+    public static string DefaultPath =>
+        Environment.GetEnvironmentVariable("XMRIG_FLEET_CONFIG")
+        ?? System.IO.Path.Combine(AppContext.BaseDirectory, "fleet.json");
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        WriteIndented = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
+
+    public static FleetConfig Load(string? path = null)
+    {
+        path ??= DefaultPath;
+        FleetConfig config;
+        if (File.Exists(path))
+        {
+            try
+            {
+                config = JsonSerializer.Deserialize<FleetConfig>(File.ReadAllText(path), JsonOptions) ?? new FleetConfig();
+            }
+            catch (JsonException ex)
+            {
+                throw new InvalidOperationException($"{path} is not valid JSON: {ex.Message}", ex);
+            }
+        }
+        else
+        {
+            config = new FleetConfig();
+        }
+
+        config.Path = path;
+        return config;
+    }
+
+    public void Save()
+    {
+        var path = string.IsNullOrEmpty(Path) ? DefaultPath : Path;
+        File.WriteAllText(path, JsonSerializer.Serialize(this, JsonOptions));
+        Path = path;
+    }
+
+    public NodeConfig? FindNode(string name) =>
+        Nodes.FirstOrDefault(n => n.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+
+    public string TokenFor(NodeConfig node) =>
+        Sanitize(string.IsNullOrWhiteSpace(node.Token) ? Token : node.Token);
+
+    /// <summary>
+    /// Strips whitespace and a byte-order mark from a token. A token pasted from a file or
+    /// a terminal easily carries a trailing newline or a BOM, and those characters make the
+    /// HTTP header itself invalid: the request then fails at the transport level and the node
+    /// is reported unreachable rather than unauthorized, which sends the operator hunting the
+    /// wrong problem.
+    /// </summary>
+    private static string Sanitize(string token) => token.Trim().Trim('﻿', '​');
+
+    /// <summary>The tariff that actually applies to a node: its own, else the fleet default.</summary>
+    public double PricePerKwhFor(NodeConfig node) => node.PricePerKwh ?? Electricity.PricePerKwh;
+
+    /// <summary>
+    /// The throttle rules a node should actually run: the fleet's, with that node's exceptions
+    /// laid over them.
+    ///
+    /// Resolved here rather than on the node so the machines cannot drift apart. A rig only ever
+    /// receives a finished answer, and the file on the operator's machine stays the single place
+    /// the rules are read from and edited.
+    /// </summary>
+    public ThrottleSettingsDto ThrottleFor(NodeConfig node)
+    {
+        var own = node.Throttle;
+
+        return new ThrottleSettingsDto
+        {
+            Enabled = own?.Enabled ?? Throttle.Enabled,
+            Steps = (own?.Steps ?? Throttle.Steps) is { Count: > 0 } steps
+                ? steps.Select(s => new ThrottleStepDto(s.OtherCpuPercent, s.Level)).ToList()
+                : ThrottleSettingsDto.DefaultSteps,
+            FloorLevel = own?.FloorLevel ?? Throttle.FloorLevel,
+            RampUpSeconds = own?.RampUpSeconds ?? Throttle.RampUpSeconds,
+        };
+    }
+
+    /// <summary>
+    /// How many physical cores a node holds back for whoever is sitting at it.
+    ///
+    /// Almost always a per-node answer rather than a fleet one, and more so than the algorithm is:
+    /// a rig in a cupboard reserves nothing, and the machine somebody games on reserves two. A
+    /// fleet-wide default exists only so a fleet of workstations can say it once.
+    /// </summary>
+    public int ReservedCoresFor(NodeConfig node) => node.ReservedCores ?? ReservedCores ?? 0;
+
+    /// <summary>
+    /// The two ceilings a node runs under: how much of its own full speed the miner may use, and
+    /// how hot its CPU may get. Both resolve node-first, like everything else here.
+    ///
+    /// Nulls are passed through rather than defaulted. A fleet that has never set either must not
+    /// have a number invented for it — the agent leaves a node alone when both are absent, and
+    /// picking a temperature on the operator's behalf would be picking one for hardware this
+    /// console has never seen.
+    /// </summary>
+    public (int? MaxCpuPercent, double? MaxCpuTemperatureC) CpuBudgetFor(NodeConfig node) =>
+        (node.MaxCpuPercent ?? MaxCpuPercent, node.MaxCpuTemperatureC ?? MaxCpuTemperatureC);
+
+    /// <summary>
+    /// When a node stops CPU mining for whoever is at it. Replaced whole by a node that names one
+    /// rather than merged field by field, for the reason the card's rule is: a condition a node did
+    /// not ask for is a node standing idle with nothing to explain it.
+    /// </summary>
+    public GpuPauseRuleDto? MinerPauseFor(NodeConfig node) => PauseRuleFor(node.PauseWhile ?? PauseWhile);
+
+    /// <summary>
+    /// What a node's graphics card should mine: the fleet's answer with that node's exceptions
+    /// laid over it, resolved here for the same reason <see cref="ThrottleFor"/> is.
+    ///
+    /// The per-node half carries more weight here than it does for the throttle, because the
+    /// algorithm belongs to the card rather than to the fleet. A fleet-wide "mine Tari" is
+    /// meaningless on a 4 GB card that cannot run Cuckaroo29 at all.
+    /// </summary>
+    public GpuMinerSettingsDto GpuMinerFor(NodeConfig node)
+    {
+        var own = node.GpuMiner;
+
+        return new GpuMinerSettingsDto
+        {
+            Enabled = own?.Enabled ?? GpuMiner.Enabled,
+            Algorithm = own?.Algorithm ?? GpuMiner.Algorithm,
+            PoolUrl = own?.PoolUrl ?? GpuMiner.PoolUrl,
+            User = own?.User ?? GpuMiner.User,
+            Password = own?.Password ?? GpuMiner.Password ?? "x",
+            ApiPort = own?.ApiPort ?? GpuMiner.ApiPort ?? DefaultGpuApiPort,
+            RunInInteractiveSession = own?.RunInInteractiveSession ?? GpuMiner.RunInInteractiveSession,
+            PauseWhile = PauseRuleFor(own?.PauseWhile ?? GpuMiner.PauseWhile),
+        };
+    }
+
+    /// <summary>
+    /// lolMiner's loopback API port when nobody has chosen one. One above the xmrig API's 47801,
+    /// so the two miners cannot collide on a node running both.
+    /// </summary>
+    public const int DefaultGpuApiPort = 47802;
+
+    /// <summary>
+    /// Converts a pause rule, or returns null when the rule names no condition — a block with only
+    /// a quiet time in it would stand a node down forever with nothing to wake it.
+    /// </summary>
+    private static GpuPauseRuleDto? PauseRuleFor(GpuPauseConfig? rule)
+    {
+        if (rule is null) return null;
+
+        var resolved = new GpuPauseRuleDto
+        {
+            TcpPort = rule.TcpPort,
+            ProcessName = string.IsNullOrWhiteSpace(rule.ProcessName) ? null : rule.ProcessName.Trim(),
+            ProcessNames = rule.ProcessNames is { Count: > 0 } ? rule.ProcessNames : null,
+            QuietSeconds = rule.QuietSeconds,
+        };
+
+        return resolved.NamesACondition ? resolved : null;
+    }
+}
+
+/// <summary>
+/// What a graphics card mines. Every field is nullable at node level so one rig can name a
+/// different algorithm without restating the pool, the login or the pause rule.
+/// </summary>
+public sealed class GpuMinerConfig
+{
+    /// <summary>Off unless asked for, like the throttle and for the same reason.</summary>
+    public bool? Enabled { get; set; }
+
+    /// <summary>lolMiner's algorithm name, e.g. <c>CR29</c> or <c>NEXA</c>.</summary>
+    public string? Algorithm { get; set; }
+
+    /// <summary>host:port of the pool.</summary>
+    public string? PoolUrl { get; set; }
+
+    /// <summary>
+    /// The pool login exactly as that pool wants it — <c>XMR:address.worker</c> for unMineable,
+    /// <c>address/worker</c> for Kryptex. Written whole because no two pools agree on the shape.
+    /// </summary>
+    public string? User { get; set; }
+
+    public string? Password { get; set; }
+
+    /// <summary>Loopback port for lolMiner's API. Null uses <see cref="FleetConfig.DefaultGpuApiPort"/>.</summary>
+    public int? ApiPort { get; set; }
+
+    /// <summary>
+    /// Start the miner in the node's logged-on session rather than the agent's session 0. Needed
+    /// on some machines and not others; see <see cref="GpuMinerSettingsDto.RunInInteractiveSession"/>.
+    /// </summary>
+    public bool? RunInInteractiveSession { get; set; }
+
+    /// <summary>When the card should be handed back to whoever is using the machine.</summary>
+    public GpuPauseConfig? PauseWhile { get; set; }
+}
+
+/// <summary>
+/// When GPU mining stands down. Names ports and processes, not applications, because a local
+/// model, a game and a render all want the card for the same reason.
+///
+/// Every condition named is watched and any one of them is enough, so a node can hand its card
+/// both to a model and to a game without the operator having to choose which matters more.
+/// </summary>
+public sealed class GpuPauseConfig
+{
+    /// <summary>Stand down while anything holds a connection to this local port, e.g. 11434 for Ollama.</summary>
+    public int? TcpPort { get; set; }
+
+    /// <summary>Stand down while a process of this name runs. No extension.</summary>
+    public string? ProcessName { get; set; }
+
+    /// <summary>
+    /// Stand down while any of these processes run. No extensions. Kept alongside the singular
+    /// field above, which older configs use and which is folded in rather than ignored.
+    /// </summary>
+    public List<string>? ProcessNames { get; set; }
+
+    /// <summary>Seconds of quiet before mining resumes. Standing down is immediate.</summary>
+    public int? QuietSeconds { get; set; }
+}
+
+/// <summary>
+/// How hard a miner may run while somebody is using its machine. Every field is nullable at node
+/// level so an exception can name one setting without restating the rest.
+/// </summary>
+public sealed class ThrottleConfig
+{
+    /// <summary>Off unless asked for: throttling a rig nobody sits at only loses money.</summary>
+    public bool? Enabled { get; set; }
+
+    /// <summary>The ladder, read against CPU used by everything except the miner.</summary>
+    public List<ThrottleStepConfig>? Steps { get; set; }
+
+    /// <summary>Never go below this level. 0 lets the miner stop and hand its memory back.</summary>
+    public int? FloorLevel { get; set; }
+
+    /// <summary>Seconds of quiet before climbing a rung. Coming down is always immediate.</summary>
+    public int? RampUpSeconds { get; set; }
+}
+
+public sealed class ThrottleStepConfig
+{
+    public double OtherCpuPercent { get; set; }
+    public int Level { get; set; }
+}
+
+public sealed class NodeConfig
+{
+    public string Name { get; set; } = "";
+
+    /// <summary>Tailscale IP or MagicDNS name.</summary>
+    public string Host { get; set; } = "";
+
+    public int Port { get; set; } = 47800;
+
+    /// <summary>Per-node override of the fleet token. Null falls back to <see cref="FleetConfig.Token"/>.</summary>
+    public string? Token { get; set; }
+
+    /// <summary>Excluded nodes are kept in the file but never polled or controlled.</summary>
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>Directory xmrig lives in on that node, used to prefill the install prompt.</summary>
+    public string? MinerPath { get; set; }
+
+    /// <summary>Watts assumed when the node reports no power sensor.</summary>
+    public double? PowerFallbackWatts { get; set; }
+
+    /// <summary>
+    /// Electricity tariff at this machine, when it differs from the fleet default — rigs
+    /// often sit in different flats, regions or tariff bands. Null uses
+    /// <see cref="ElectricityConfig.PricePerKwh"/>. The currency stays fleet-wide, because
+    /// totals across nodes are only meaningful in one currency.
+    /// </summary>
+    public double? PricePerKwh { get; set; }
+
+    /// <summary>
+    /// This machine's exceptions to the fleet throttle rules. Only the fields that differ need
+    /// setting; the rest come from <see cref="FleetConfig.Throttle"/>. A gaming rig and a
+    /// headless one want different answers, and the Xeon's 16 GB wants a different one again.
+    /// </summary>
+    public ThrottleConfig? Throttle { get; set; }
+
+    /// <summary>
+    /// Physical cores this machine holds back from the miner for the person using it.
+    ///
+    /// Set on the node rather than the fleet because it answers a question about the room the
+    /// machine is in. Two cores cost 7% of `mks68i7rtx`'s hashrate and made a game playable; the
+    /// same two on a rig nobody touches would be 7% given away for nothing.
+    /// </summary>
+    public int? ReservedCores { get; set; }
+
+    /// <summary>
+    /// The most of its own full speed this miner may use, 1-100. Full speed is the thread count
+    /// xmrig would pick unaided: one RandomX thread per physical core, capped by 2 MB of L3 each.
+    /// </summary>
+    public int? MaxCpuPercent { get; set; }
+
+    /// <summary>
+    /// The temperature this machine's CPU package must stay under, in Celsius.
+    ///
+    /// Belongs on the node because it is a fact about a cooler and a room, not about a fleet. The
+    /// i7-12700KF here reaches 99.7 C at twelve threads and 89.3 C at eight, and the machine
+    /// beside it never gets near either number.
+    /// </summary>
+    public double? MaxCpuTemperatureC { get; set; }
+
+    /// <summary>
+    /// This machine's graphics card settings. Usually where the algorithm actually lives: an
+    /// RTX 4060 mines Cuckaroo29 and a 4 GB RX 6500 XT cannot, so the fleet default rarely fits
+    /// every card at once.
+    /// </summary>
+    public GpuMinerConfig? GpuMiner { get; set; }
+
+    /// <summary>
+    /// When this node stops CPU mining entirely for whoever is at the machine.
+    ///
+    /// Same conditions as the card's rule and, on a node that has both, usually the same list:
+    /// a game wants the processor and the graphics card at once.
+    /// </summary>
+    public GpuPauseConfig? PauseWhile { get; set; }
+
+    /// <summary>Directory lolMiner lives in on that node, used to prefill the install prompt.</summary>
+    public string? GpuMinerPath { get; set; }
+
+    public string Endpoint => $"http://{Host}:{Port}";
+
+    public override string ToString() => $"{Name} ({Host}:{Port})";
+}
+
+public sealed class UpdateConfig
+{
+    /// <summary>GitHub repository holding the releases, as `owner/name`.</summary>
+    public string Repository { get; set; } = "XYphrodite/xmrig-fleet";
+
+    /// <summary>Personal access token, needed only when the repository is private.</summary>
+    public string? Token { get; set; }
+
+    /// <summary>Check for a newer release when the interactive console starts.</summary>
+    public bool CheckOnStart { get; set; } = true;
+}
+
+public sealed class ElectricityConfig
+{
+    public double PricePerKwh { get; set; } = 5.0;
+
+    /// <summary>The currency every amount is counted in: the tariff, costs and income.</summary>
+    public string Currency { get; set; } = "RUB";
+
+    /// <summary>
+    /// Optional second currency each amount is echoed in. Blank shows amounts once.
+    /// The rate comes from the pool quoting XMR in both currencies, so both columns move
+    /// together instead of drifting apart on two different feeds.
+    /// </summary>
+    public string? SecondaryCurrency { get; set; } = "USD";
+}
+
+public sealed class PoolConfig
+{
+    /// <summary>Hashvault REST base for the coin you mine.</summary>
+    public string ApiBase { get; set; } = "https://api.hashvault.pro/v3/monero";
+
+    /// <summary>Stratum URL the agents are pointed at.</summary>
+    public string Url { get; set; } = "pool.hashvault.pro:443";
+
+    /// <summary>Wallet address, used both for the miner user and for the pool/balance lookups.</summary>
+    public string Wallet { get; set; } = "";
+
+    public string? Password { get; set; }
+}

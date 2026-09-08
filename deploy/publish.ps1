@@ -22,7 +22,7 @@ $root = Resolve-Path "$PSScriptRoot\.."
 
 $agentOut = Join-Path $OutputPath 'agent'
 Write-Host "Publishing agent ($Runtime) to $agentOut"
-& dotnet publish (Join-Path $root 'src\XmrigFleet.Agent') `
+& dotnet publish (Join-Path $root 'src\MiningFleet.Agent') `
     -c Release -r $Runtime --self-contained true `
     -p:PublishSingleFile=false `
     -o $agentOut
@@ -31,7 +31,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Agent publish failed.' }
 if (-not $SkipConsole) {
     $consoleOut = Join-Path $OutputPath 'console'
     Write-Host "Publishing console ($Runtime) to $consoleOut"
-    & dotnet publish (Join-Path $root 'src\XmrigFleet.Console') `
+    & dotnet publish (Join-Path $root 'src\MiningFleet.Console') `
         -c Release -r $Runtime --self-contained true `
         -o $consoleOut
     if ($LASTEXITCODE -ne 0) { throw 'Console publish failed.' }

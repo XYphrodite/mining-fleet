@@ -1,12 +1,15 @@
-# xmrig-fleet
+# mining-fleet
 
-Консольное управление майнингом xmrig на всех ПК пула через tailnet.
+Консольное управление майнингом на всех ПК пула через tailnet.
+
+Команды и установленные файлы пока называются `xmrig-fleet` и `xmrig-fleet-agent` —
+так они стоят на живых нодах; переименование поставки отдельным шагом.
 
 Две части:
 
-- **агент** (`XmrigFleet.Agent`) — маленький HTTP-сервис на каждой майнящей машине. Запускает и
+- **агент** (`MiningFleet.Agent`) — маленький HTTP-сервис на каждой майнящей машине. Запускает и
   останавливает xmrig, читает его хэшрейт, снимает датчики железа, ставит и обновляет майнер.
-- **консоль** (`XmrigFleet.Console`) — TUI на Spectre.Console на вашей машине. Опрашивает все ноды,
+- **консоль** (`MiningFleet.Console`) — TUI на Spectre.Console на вашей машине. Опрашивает все ноды,
   показывает живую таблицу, считает электричество и доход, тянет баланс с Hashvault.
 
 Связь — обычный HTTP поверх Tailscale. Порт агента закрыт файрволом на всё, кроме диапазона
@@ -563,8 +566,8 @@ LibreHardwareMonitor 0.9.6 получает его через драйвер **P
 ```
 dotnet build            # решение целиком
 dotnet test             # тесты консоли (разметка, деньги, обновление)
-dotnet run --project src/XmrigFleet.Agent      # агент в консоли, для отладки
-dotnet run --project src/XmrigFleet.Console    # TUI
+dotnet run --project src/MiningFleet.Agent      # агент в консоли, для отладки
+dotnet run --project src/MiningFleet.Console    # TUI
 ```
 
 Целевой фреймворк — .NET 8. Датчики железа — LibreHardwareMonitorLib; агенту нужны права

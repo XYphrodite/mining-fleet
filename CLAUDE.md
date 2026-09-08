@@ -29,13 +29,17 @@ The canonical project overview is auto-loaded via the import below. Keep it curr
   operator started by hand. Stopping a rig costs real mining revenue.
 - **Kill `xmrig-fleet-agent.exe` before rebuilding.** A running agent locks its own
   executable and `dotnet build` fails with `MSB3021` / `MSB3027`.
+- The product is **mining-fleet**; code and docs use `MiningFleet`. Do not rename
+  `xmrig-fleet.exe`, `xmrig-fleet-agent.exe`, the Windows service, release zip names,
+  or the GitHub repo without an identity-migration plan — those are what live nodes
+  and `upgrade-agents` look up.
 - **Run `dotnet test` after touching a screen.** Spectre renders prompts and widgets as
   markup, so any text the app did not author — a hostname, an OS name, a path, an error
   message — must go through `UiHelpers.Escape` or `UiHelpers.Text`. Unescaped `[` has
   crashed the console twice; `MarkupSafetyTests` drives the real prompts to catch it.
 - `fleet.json` (console) and `miner.json` (agent) hold the fleet token and wallet
   address. Both are gitignored — never commit them or paste their contents.
-- The tracked `src/XmrigFleet.Agent/appsettings.json` is a **template**: its token must
+- The tracked `src/MiningFleet.Agent/appsettings.json` is a **template**: its token must
   stay the `CHANGE-ME` placeholder. Real tokens are written on the node by
   `install-agent.ps1`, never committed here.
 - The agent needs Administrator/root for sensors and for killing another user's miner.

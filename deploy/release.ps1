@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Builds, packages and publishes an xmrig-fleet release.
+    Builds, packages and publishes a mining-fleet release.
 
 .DESCRIPTION
     Produces the assets that `deploy\install.ps1` and `xmrig-fleet update` look for:
@@ -53,8 +53,8 @@ if (Test-Path $OutputPath) { Remove-Item $OutputPath -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $OutputPath | Out-Null
 
 $targets = @(
-    @{ Name = 'xmrig-fleet';       Project = 'src\XmrigFleet.Console'; Asset = "xmrig-fleet-$Runtime.zip" }
-    @{ Name = 'xmrig-fleet-agent'; Project = 'src\XmrigFleet.Agent';   Asset = "xmrig-fleet-agent-$Runtime.zip" }
+    @{ Name = 'xmrig-fleet';       Project = 'src\MiningFleet.Console'; Asset = "xmrig-fleet-$Runtime.zip" }
+    @{ Name = 'xmrig-fleet-agent'; Project = 'src\MiningFleet.Agent';   Asset = "xmrig-fleet-agent-$Runtime.zip" }
 )
 
 foreach ($t in $targets) {

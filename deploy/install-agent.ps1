@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Installs the xmrig-fleet agent as a Windows service on a mining node.
+    Installs the mining-fleet agent as a Windows service on a mining node.
 
 .DESCRIPTION
     Copies the published agent to the target directory, writes appsettings.json with the
@@ -131,7 +131,7 @@ Write-Host "Firewall: allowed TCP $Port from the tailnet range only (100.64.0.0/
 
 $binPath = '"{0}"' -f (Join-Path $InstallPath $exeName)
 & sc.exe create $ServiceName binPath= $binPath start= auto DisplayName= "xmrig fleet agent" | Out-Null
-& sc.exe description $ServiceName "Controls xmrig and reports hardware telemetry to the xmrig-fleet console." | Out-Null
+& sc.exe description $ServiceName "Controls xmrig and reports hardware telemetry to the mining-fleet console." | Out-Null
 # Restart the service if it ever crashes, so a node does not silently drop out of the fleet.
 & sc.exe failure $ServiceName reset= 86400 actions= restart/5000/restart/15000/restart/60000 | Out-Null
 

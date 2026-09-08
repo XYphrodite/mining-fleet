@@ -1,12 +1,19 @@
-# xmrig-fleet - Project Context
+# mining-fleet - Project Context
 
 ## Project Overview
 
-**xmrig-fleet** is a console fleet manager for [XMRig](https://github.com/xmrig/xmrig)
+**mining-fleet** is a console fleet manager for [XMRig](https://github.com/xmrig/xmrig)
 mining rigs joined by a Tailscale tailnet. A small HTTP agent on every mining PC starts
 and stops the miner, reports hashrate and hardware telemetry, and installs or updates
 XMRig on demand; a Spectre.Console TUI on the operator machine polls the whole fleet,
-prices the electricity it burns, and reads the pool balance from Hashvault.
+prices the electricity it burns, and reads the pool balance from Hashvault. The agent
+also drives lolMiner on nodes that mine a GPU coin.
+
+The product name is mining-fleet. Installed binaries (`xmrig-fleet.exe`,
+`xmrig-fleet-agent.exe`), the Windows service, release zip names and the GitHub
+repository `XYphrodite/xmrig-fleet` stay as they are until a later identity migration:
+`upgrade-agents` looks those names up exactly, and a hard cut would leave a node
+mining with no agent.
 
 **Platform**: .NET 8 (`net8.0`), Windows 10/11 today, Linux-ready
 **Language**: C# 12
@@ -140,12 +147,12 @@ API enabled, so hashrate never has to be scraped from stdout.
 
 ## Project Components
 
-The solution ([XmrigFleet.slnx](XmrigFleet.slnx)) contains **four** projects — three that
+The solution ([MiningFleet.slnx](MiningFleet.slnx)) contains **four** projects — three that
 ship, plus a test project.
 
-### 1. **XmrigFleet.Agent**
+### 1. **MiningFleet.Agent**
 **Type**: ASP.NET Core Minimal API -> `xmrig-fleet-agent.exe`
-**Location**: `src/XmrigFleet.Agent/`
+**Location**: `src/MiningFleet.Agent/`
 **Purpose**: Runs on every mining PC. The only component that controls XMRig or reads
 hardware.
 
@@ -162,7 +169,7 @@ hardware.
 | `MinerService` | Start/stop/restart XMRig, read `/2/summary` and `/2/backends` off the loopback API, keep the last 200 output lines |
 | `HardwareService` | LibreHardwareMonitor sensors, power estimate, PawnIO diagnostics |
 | `InstallerService` | Resolve the right GitHub release asset, download, unpack, repoint the config |
-| `AgentUpdateService` | Update the agent itself from an xmrig-fleet release and restart into it |
+| `AgentUpdateService` | Update the agent itself from a mining-fleet release and restart into it |
 | `PerformanceCounterPump` | Polls Windows' performance counters. Tried as a fix for the hashrate gap below and did **not** work; kept only because it is harmless and rules the idea out |
 | `SessionMonitorService` | Keeps one hidden monitor window in the node's logged-on session — Task Manager, or Resource Monitor if that will not run. Launches with `CreateProcessAsUser`, waits out the hand-over to the child process both of them exit into, and adopts one already open rather than starting a second |
 | `ThrottleService` | Holds the miner back while somebody is using the machine: reads the ladder every second, caps or stops the miner, records every decision |
@@ -182,9 +189,9 @@ hardware.
 | `UsageProbe` | The observations both rules need — is that port carrying traffic, is that program running. Reads the TCP table through `IPGlobalProperties` (`Get-NetTCPConnection` sees nothing from a service) and takes one snapshot of the process table per tick rather than one per watched name |
 | `GpuPauseRule` | The stand-down rule itself, pure and clock-injected, and the part the tests drive. Both halves are here: which conditions are met (`Evaluate`) and how long the card waits before coming back |
 
-### 2. **XmrigFleet.Console**
+### 2. **MiningFleet.Console**
 **Type**: Console application -> `xmrig-fleet.exe`
-**Location**: `src/XmrigFleet.Console/`
+**Location**: `src/MiningFleet.Console/`
 **Purpose**: The operator interface — a Spectre.Console TUI, plus one-shot commands for
 unattended use.
 
@@ -206,17 +213,17 @@ install/push/autostart/logs), `NodesScreen` (discover/add/edit/test), `HardwareS
 | `UpdateService` | GitHub release lookup, streaming download, in-place file swap |
 | `Updater` | The `update` command, its progress bar, and the start-up "newer version" notice |
 
-### 3. **XmrigFleet.Contracts**
+### 3. **MiningFleet.Contracts**
 **Type**: Class library
-**Location**: `src/XmrigFleet.Contracts/`
+**Location**: `src/MiningFleet.Contracts/`
 **Purpose**: The wire contract shared by both sides — `NodeSnapshotDto`,
 `MinerStatusDto`, `HardwareDto`, `MinerConfigDto`, `InstallRequestDto`,
 `CommandResultDto`, `GpuMinerSettingsDto`, `GpuMinerStatusDto`, `GpuPauseRuleDto`, plus
 `ApiVersion.Current` so the console can warn on a mismatch.
 
-### 4. **XmrigFleet.Console.Tests**
+### 4. **MiningFleet.Console.Tests**
 **Type**: xUnit test project
-**Location**: `tests/XmrigFleet.Console.Tests/`
+**Location**: `tests/MiningFleet.Console.Tests/`
 **Purpose**: Guards the three contracts that have actually broken in use, rather than
 chasing coverage.
 
@@ -238,7 +245,7 @@ chasing coverage.
 | `MenuNavigationTests` | Arrows wrap in both directions; Escape answers with the menu's own way out and never with one of a two-answer menu's answers; the node picker backs out to null and the multi-picker to an empty list rather than the whole fleet; and a menu cannot be built with a cancel value it does not offer |
 
 `AnsiConsole.Console` is a global that the markup tests swap, so
-[AssemblyInfo.cs](tests/XmrigFleet.Console.Tests/AssemblyInfo.cs) disables parallel runs.
+[AssemblyInfo.cs](tests/MiningFleet.Console.Tests/AssemblyInfo.cs) disables parallel runs.
 
 ---
 
@@ -374,8 +381,8 @@ resumes, not so a machine somebody is using starts mining under them.
 
 ```powershell
 dotnet build                                    # whole solution
-dotnet run --project src/XmrigFleet.Agent       # agent in the foreground
-dotnet run --project src/XmrigFleet.Console     # interactive TUI
+dotnet run --project src/MiningFleet.Agent       # agent in the foreground
+dotnet run --project src/MiningFleet.Console     # interactive TUI
 ```
 
 ### Publish and roll out
@@ -448,9 +455,9 @@ xmrig-fleet version
 ## Directory Structure
 
 ```
-xmrig-fleet/
+mining-fleet/
 ├── src/
-│   ├── XmrigFleet.Agent/          # node agent -> xmrig-fleet-agent.exe
+│   ├── MiningFleet.Agent/          # node agent -> xmrig-fleet-agent.exe
 │   │   ├── Program.cs             # minimal API, token middleware, service hosting
 │   │   ├── MinerService.cs        # XMRig process control + loopback API reader
 │   │   ├── HardwareService.cs     # sensors, power estimate, PawnIO diagnostics
@@ -459,7 +466,7 @@ xmrig-fleet/
 │   │   ├── GpuPauseService.cs     # hands the card back while somebody needs it
 │   │   ├── GpuPauseRule.cs        # the stand-down rule itself, pure and clock-injected
 │   │   └── AgentOptions.cs        # options + miner.json store
-│   ├── XmrigFleet.Console/        # operator console -> xmrig-fleet.exe
+│   ├── MiningFleet.Console/        # operator console -> xmrig-fleet.exe
 │   │   ├── Ui/                    # Dashboard, Miner, Nodes, Hardware, Economics, Pool, Settings
 │   │   ├── FleetService.cs        # parallel poll and command fan-out
 │   │   ├── MarketService.cs       # Hashvault + price parsing
@@ -468,9 +475,9 @@ xmrig-fleet/
 │   │   ├── UpdateService.cs       # release lookup, download, in-place file swap
 │   │   ├── Updater.cs             # the update command and its progress bar
 │   │   └── Cli.cs                 # one-shot commands
-│   └── XmrigFleet.Contracts/      # DTOs shared by both sides
+│   └── MiningFleet.Contracts/      # DTOs shared by both sides
 ├── tests/
-│   └── XmrigFleet.Console.Tests/  # markup, money and update-asset contracts
+│   └── MiningFleet.Console.Tests/  # markup, money and update-asset contracts
 ├── deploy/
 │   ├── install.ps1                # one-line operator install (irm ... | iex)
 │   ├── release.ps1                # build, package and publish a GitHub release
@@ -480,7 +487,7 @@ xmrig-fleet/
 │   └── xmrig-fleet-agent.service  # systemd unit for Linux nodes
 ├── README.md                      # operator guide (Russian)
 ├── ProjectContext.md              # this document
-└── XmrigFleet.slnx
+└── MiningFleet.slnx
 ```
 
 ---
@@ -720,6 +727,10 @@ xmrig-fleet/
 - [ ] Linux agent: systemd unit, `linux-static-x64` install path, `/sys` sensors
 
 ### Planned 📋
+- [ ] **Finish the rename onto the shipped identity.** Code and docs are `MiningFleet`;
+      binaries, the Windows service, zip names and `XYphrodite/xmrig-fleet` are not.
+      The next cut must keep matching the old asset names for one release, or
+      `upgrade-agents` will not find a payload and a node can be left mining with no agent.
 - [ ] **Finish GPU mining out of the CLI.** Four pieces, in the order they hurt: an interactive
       session launcher (without it one node cannot be driven from the console at all), a
       `GpuInstallerService` so lolMiner arrives the way XMRig does, a `GpuScreen` in the TUI, and a
@@ -932,6 +943,7 @@ xmrig-fleet/
 **Last Updated**: 2026-09-08
 **Product Version**: 1.16.0
 **Status**: Active
-**Repository**: `c:\Repos\xmrig-fleet` (branch `master`), published at
+**Repository**: `c:\Repos\xmrig-fleet` (branch `master`; GitHub and the
+folder are still named xmrig-fleet), published at
 [github.com/XYphrodite/xmrig-fleet](https://github.com/XYphrodite/xmrig-fleet)
 **Related docs**: [README.md](README.md) (operator guide, Russian)

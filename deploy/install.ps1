@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Installs the xmrig-fleet operator console.
+    Installs the mining-fleet operator console.
 
 .DESCRIPTION
     Meant to be piped straight from the web:
