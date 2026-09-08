@@ -151,6 +151,32 @@ public sealed record MinerConfigDto
     public ThrottleSettingsDto? Throttle { get; init; }
 
     /// <summary>
+    /// When to stop CPU mining entirely and give the machine back to whoever is at it.
+    ///
+    /// Stopped, not held down a rung. A capped miner still holds its RandomX dataset — 2.3 GB in
+    /// huge pages — and on the fleet's 16 GB Xeon that memory is most of what makes the machine
+    /// feel slow while somebody plays on it. It also still owns a thread on every physical core,
+    /// which is the arrangement that leaves a game running on hyperthread siblings of saturated
+    /// cores and nothing else.
+    ///
+    /// The same conditions the card's rule takes, and deliberately so: a port or a process means
+    /// "somebody is using this machine" whichever miner is being asked to stand aside.
+    ///
+    /// Null means never, which is right for a rig nobody sits at.
+    /// </summary>
+    public GpuPauseRuleDto? PauseWhile { get; init; }
+
+    /// <summary>
+    /// True when the CPU miner is stopped because <see cref="PauseWhile"/> matched, rather than
+    /// because an operator stopped it or the throttle took it to zero.
+    ///
+    /// Persisted for the same reason <see cref="MinerStoppedByThrottle"/> is: the agent restarts
+    /// often, and without this a node stopped for a game either never mines again or starts mining
+    /// under somebody mid-round.
+    /// </summary>
+    public bool? MinerStoppedByPause { get; init; }
+
+    /// <summary>
     /// The most of this node's mining capacity the miner may use, 1-100.
     ///
     /// A share of what the miner would run at full speed — the same convention the throttle

@@ -99,6 +99,19 @@ public sealed class ThrottleLog
             DateTime.Now, from, to, temp, reason));
     }
 
+    /// <summary>
+    /// The CPU miner standing aside for somebody at the machine, or coming back.
+    ///
+    /// Recorded here rather than only in the agent log because this file is the node's own account
+    /// of what it was allowed to do, and "why was this rig idle last night" is the question it
+    /// exists to answer.
+    /// </summary>
+    public void RecordPause(bool paused, string reason) =>
+        Append(string.Format(
+            CultureInfo.InvariantCulture,
+            "{0:yyyy-MM-dd HH:mm:ss}  miner {1,-8}  {2}",
+            DateTime.Now, paused ? "paused" : "resumed", reason));
+
     private void Append(string line)
     {
         lock (_gate)

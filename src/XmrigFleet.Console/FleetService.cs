@@ -138,6 +138,7 @@ public sealed class FleetService
                     ReservedCores = reserved,
                     MaxCpuPercent = maxCpu,
                     MaxCpuTemperatureC = maxTemp,
+                    PauseWhile = _config.MinerPauseFor(node),
                 }, token);
             if (saved is null) return CommandResultDto.Failure("empty response");
 
@@ -162,6 +163,18 @@ public sealed class FleetService
                 note += (saved.MaxCpuPercent, saved.MaxCpuTemperatureC) == (maxCpu, maxTemp)
                     ? $", ceilings {Ceiling(maxCpu, maxTemp)}"
                     : ", but this agent did not take the CPU ceilings; run upgrade-agents";
+            }
+
+            if (_config.MinerPauseFor(node) is { } pause)
+            {
+                note += saved.PauseWhile is { } storedPause && storedPause.NamesACondition
+                    ? $", stopping while {DescribeConditions(storedPause)}"
+                    : ", but this agent did not take the pause rule; run upgrade-agents";
+
+                // Named rather than assumed equal: an agent that stored a different rule from the
+                // one sent is a node behaving differently from the file the operator is reading.
+                if (saved.PauseWhile is { } stored && DescribeConditions(stored) != DescribeConditions(pause))
+                    note += " (which is not what was sent)";
             }
 
             return CommandResultDto.Success(Describe(applied) + note);
@@ -195,6 +208,19 @@ public sealed class FleetService
             return CommandResultDto.Success(DescribeGpuSettings(applied));
         }, ct);
 
+    /// <summary>
+    /// Everything a stand-down rule watches, in one phrase. Every condition is named, not just the
+    /// first: a node reported as "stopping while port 11434 is busy" while it also stands down for
+    /// three games tells the operator nothing about the game they are asking about.
+    /// </summary>
+    public static string DescribeConditions(GpuPauseRuleDto rule)
+    {
+        var parts = new List<string>();
+        if (rule.TcpPort is { } port) parts.Add($"port {port} is busy");
+        parts.AddRange(rule.Processes.Select(p => $"{p} runs"));
+        return parts.Count == 0 ? "nothing" : string.Join(" or ", parts);
+    }
+
     /// <summary>The two CPU ceilings in one phrase, naming only the ones that are set.</summary>
     public static string Ceiling(int? maxCpuPercent, double? maxCpuTemperatureC)
     {
@@ -211,16 +237,9 @@ public sealed class FleetService
             ? $"{settings.Algorithm ?? "no algorithm"} on {settings.PoolUrl ?? "no pool"}"
             : "off";
 
-        if (settings.PauseWhile is not { } pause || !pause.NamesACondition) return what;
-
-        // Every condition is named, not just the first: a node reported as "pausing while port
-        // 11434 is busy" while it also stands down for three games tells the operator less than
-        // nothing when one of those games is the one they are asking about.
-        var conditions = new List<string>();
-        if (pause.TcpPort is { } port) conditions.Add($"port {port} is busy");
-        conditions.AddRange(pause.Processes.Select(p => $"{p} runs"));
-
-        return $"{what}, pausing while {string.Join(" or ", conditions)}";
+        return settings.PauseWhile is { } pause && pause.NamesACondition
+            ? $"{what}, pausing while {DescribeConditions(pause)}"
+            : what;
     }
 
     /// <summary>

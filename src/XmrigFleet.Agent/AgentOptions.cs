@@ -122,6 +122,8 @@ public sealed class MinerConfigStore
                 MaxCpuPercent = patch.MaxCpuPercent ?? _current.MaxCpuPercent,
                 MaxCpuTemperatureC = patch.MaxCpuTemperatureC ?? _current.MaxCpuTemperatureC,
                 MinerStoppedByThrottle = patch.MinerStoppedByThrottle ?? _current.MinerStoppedByThrottle,
+                PauseWhile = MergePauseRule(_current.PauseWhile, patch.PauseWhile),
+                MinerStoppedByPause = patch.MinerStoppedByPause ?? _current.MinerStoppedByPause,
                 GpuMiner = MergeGpuMiner(_current.GpuMiner, patch.GpuMiner),
                 GpuStoppedByPause = patch.GpuStoppedByPause ?? _current.GpuStoppedByPause,
             };
@@ -143,7 +145,9 @@ public sealed class MinerConfigStore
 
     /// <inheritdoc cref="ShouldAutoStart(bool)"/>
     public static bool ShouldAutoStart(MinerConfigDto config, bool installedDefault) =>
-        (config.AutoStartMiner ?? installedDefault) && config.MinerStoppedByThrottle != true;
+        (config.AutoStartMiner ?? installedDefault)
+        && config.MinerStoppedByThrottle != true
+        && config.MinerStoppedByPause != true;
 
     /// <summary>
     /// Folds a throttle patch into what the node already has, field by field.
