@@ -50,7 +50,7 @@ Escape работает **в меню, но не в полях ввода**. Т�
 Одной строкой, права администратора не нужны:
 
 ```powershell
-irm https://raw.githubusercontent.com/XYphrodite/xmrig-fleet/master/deploy/install.ps1 | iex
+irm https://raw.githubusercontent.com/XYphrodite/mining-fleet/master/deploy/install.ps1 | iex
 ```
 
 Скачает последний релиз, распакует в `%LOCALAPPDATA%\Programs\mining-fleet` и пропишет PATH.
@@ -67,7 +67,7 @@ mining-fleet update --check  # только проверить; код возв�
 
 ```powershell
 $env:MINING_FLEET_TOKEN = 'ваш-общий-секрет'
-irm https://raw.githubusercontent.com/XYphrodite/xmrig-fleet/master/deploy/install-agent.ps1 | iex
+irm https://raw.githubusercontent.com/XYphrodite/mining-fleet/master/deploy/install-agent.ps1 | iex
 ```
 
 Скрипт сам скачает агента из последнего релиза, поставит службу с автозапуском и

@@ -14,7 +14,7 @@
     downloaded .ps1 file:
 
         $env:MINING_FLEET_TOKEN = '<fleet token>'
-        irm https://raw.githubusercontent.com/XYphrodite/xmrig-fleet/master/deploy/install-agent.ps1 | iex
+        irm https://raw.githubusercontent.com/XYphrodite/mining-fleet/master/deploy/install-agent.ps1 | iex
 
     In that form the agent payload is downloaded from the newest release automatically.
 
@@ -56,7 +56,7 @@ $exeName = 'xmrig-fleet-agent.exe'
 # No payload given: pull the agent for this platform out of the newest release.
 if ([string]::IsNullOrWhiteSpace($SourcePath)) {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    $repo = if ($env:MINING_FLEET_REPO) { $env:MINING_FLEET_REPO } elseif ($env:XMRIG_FLEET_REPO) { $env:XMRIG_FLEET_REPO } else { 'XYphrodite/xmrig-fleet' }
+    $repo = if ($env:MINING_FLEET_REPO) { $env:MINING_FLEET_REPO } elseif ($env:XMRIG_FLEET_REPO) { $env:XMRIG_FLEET_REPO } else { 'XYphrodite/mining-fleet' }
     $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64' -or $env:PROCESSOR_ARCHITEW6432 -eq 'ARM64') { 'arm64' } else { 'x64' }
     $assetNames = @("mining-fleet-agent-win-$arch.zip", "xmrig-fleet-agent-win-$arch.zip")
 

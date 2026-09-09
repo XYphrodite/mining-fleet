@@ -407,7 +407,7 @@ public sealed class NodeConfig
 public sealed class UpdateConfig
 {
     /// <summary>GitHub repository holding the releases, as `owner/name`.</summary>
-    public string Repository { get; set; } = "XYphrodite/xmrig-fleet";
+    public string Repository { get; set; } = ReleaseAssets.GitHubRepositories[0];
 
     /// <summary>Personal access token, needed only when the repository is private.</summary>
     public string? Token { get; set; }

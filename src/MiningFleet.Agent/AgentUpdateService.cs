@@ -27,7 +27,6 @@ namespace MiningFleet.Agent;
 /// </summary>
 public sealed class AgentUpdateService
 {
-    private const string ReleasesApi = "https://api.github.com/repos/XYphrodite/xmrig-fleet/releases";
     private const string BackupSuffix = ".old";
 
     /// <summary>The Windows service this binary runs as; the restart helper needs the name.</summary>
@@ -220,7 +219,20 @@ public sealed class AgentUpdateService
 
     private static async Task<(string Url, string Tag)?> ResolveAssetAsync(HttpClient http, string? version, CancellationToken ct)
     {
-        using var response = await http.GetAsync(ReleasesApi, ct);
+        foreach (var repo in ReleaseAssets.GitHubRepositories)
+        {
+            var found = await ResolveAssetFromRepoAsync(http, repo, version, ct);
+            if (found is not null) return found;
+        }
+
+        return null;
+    }
+
+    private static async Task<(string Url, string Tag)?> ResolveAssetFromRepoAsync(
+        HttpClient http, string repo, string? version, CancellationToken ct)
+    {
+        using var response = await http.GetAsync($"https://api.github.com/repos/{repo}/releases", ct);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return null;
         response.EnsureSuccessStatusCode();
 
         await using var stream = await response.Content.ReadAsStreamAsync(ct);

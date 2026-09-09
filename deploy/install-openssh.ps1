@@ -31,13 +31,13 @@
 
         $env:MINING_FLEET_SSH_KEY  = 'ssh-ed25519 AAAA... operator'
         $env:MINING_FLEET_SSH_USER = 'local'
-        irm https://raw.githubusercontent.com/XYphrodite/xmrig-fleet/master/deploy/install-openssh.ps1 | iex
+        irm https://raw.githubusercontent.com/XYphrodite/mining-fleet/master/deploy/install-openssh.ps1 | iex
 
     That URL is cached for five minutes, so a node re-run straight after a push can be handed
     the previous copy. Check the version this prints against $ScriptVersion below; when they
     differ, fetch the commit instead of the branch:
 
-        .../xmrig-fleet/<commit sha>/deploy/install-openssh.ps1
+        .../mining-fleet/<commit sha>/deploy/install-openssh.ps1
 
     Nothing here touches xmrig or the fleet agent: installing SSH does not interrupt
     mining.

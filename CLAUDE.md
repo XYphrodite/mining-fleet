@@ -30,9 +30,9 @@ The canonical project overview is auto-loaded via the import below. Keep it curr
 - **Kill `xmrig-fleet-agent.exe` (and `mining-fleet.exe` from this tree) before rebuilding.**
   A running agent or console locks its own executable and `dotnet build` fails with
   `MSB3021` / `MSB3027`.
-- The product is **mining-fleet**. The console is `mining-fleet.exe` with an
-  `xmrig-fleet.exe` shim. Do not rename `xmrig-fleet-agent.exe`, the Windows service,
-  or the GitHub repo without an identity-migration plan — those are what live nodes
+- The product is **mining-fleet**. GitHub is `XYphrodite/mining-fleet`. The console is
+  `mining-fleet.exe` with an `xmrig-fleet.exe` shim. Do not rename `xmrig-fleet-agent.exe`
+  or the Windows service without an identity-migration plan — those are what live nodes
   and `upgrade-agents` look up. Release zips are published under both names.
 - **Run `dotnet test` after touching a screen.** Spectre renders prompts and widgets as
   markup, so any text the app did not author — a hostname, an OS name, a path, an error

@@ -45,27 +45,42 @@ public sealed class UpdateService : IDisposable
         if (string.IsNullOrWhiteSpace(_config.Repository))
             throw new InvalidOperationException("update.repository is not set in fleet.json (expected \"owner/name\").");
 
-        var url = $"https://api.github.com/repos/{_config.Repository.Trim('/')}/releases/latest";
-        using var response = await _http.GetAsync(url, ct);
-        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
-            throw new InvalidOperationException($"No published release found for {_config.Repository}.");
-        response.EnsureSuccessStatusCode();
+        JsonDocument? doc = null;
+        string? lastMissing = null;
+        foreach (var repo in MiningFleet.Contracts.ReleaseAssets.RepositoriesToTry(_config.Repository))
+        {
+            var url = $"https://api.github.com/repos/{repo}/releases/latest";
+            using var response = await _http.GetAsync(url, ct);
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                lastMissing = repo;
+                continue;
+            }
 
-        await using var stream = await response.Content.ReadAsStreamAsync(ct);
-        using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
+            response.EnsureSuccessStatusCode();
+            await using var stream = await response.Content.ReadAsStreamAsync(ct);
+            doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
+            break;
+        }
 
-        var tag = doc.RootElement.TryGetProperty("tag_name", out var t) ? t.GetString() ?? "" : "";
-        if (!TryParseVersion(tag, out var released))
-            throw new InvalidOperationException($"Release tag '{tag}' is not a version this console can compare.");
+        if (doc is null)
+            throw new InvalidOperationException($"No published release found for {lastMissing ?? _config.Repository}.");
 
-        if (released <= CurrentVersion) return null;
+        using (doc)
+        {
+            var tag = doc.RootElement.TryGetProperty("tag_name", out var t) ? t.GetString() ?? "" : "";
+            if (!TryParseVersion(tag, out var released))
+                throw new InvalidOperationException($"Release tag '{tag}' is not a version this console can compare.");
 
-        var asset = FindAsset(doc.RootElement);
-        if (asset is null)
-            throw new InvalidOperationException($"Release {tag} carries no '{string.Join("' or '", AssetNames)}'.");
+            if (released <= CurrentVersion) return null;
 
-        var notes = doc.RootElement.TryGetProperty("body", out var b) ? b.GetString() : null;
-        return asset with { Version = released, Tag = tag, Notes = notes };
+            var asset = FindAsset(doc.RootElement);
+            if (asset is null)
+                throw new InvalidOperationException($"Release {tag} carries no '{string.Join("' or '", AssetNames)}'.");
+
+            var notes = doc.RootElement.TryGetProperty("body", out var b) ? b.GetString() : null;
+            return asset with { Version = released, Tag = tag, Notes = notes };
+        }
     }
 
     /// <summary>

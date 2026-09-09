@@ -5,7 +5,7 @@
 .DESCRIPTION
     Meant to be piped straight from the web:
 
-        irm https://raw.githubusercontent.com/XYphrodite/xmrig-fleet/master/deploy/install.ps1 | iex
+        irm https://raw.githubusercontent.com/XYphrodite/mining-fleet/master/deploy/install.ps1 | iex
 
     Downloads the newest release for this platform, unpacks it into the per-user programs
     folder and puts it on PATH. No administrator rights are needed: this installs the
@@ -33,7 +33,7 @@ function Get-FleetEnv([string]$Suffix) {
 }
 
 $repo    = Get-FleetEnv 'REPO'
-if (-not $repo) { $repo = 'XYphrodite/xmrig-fleet' }
+if (-not $repo) { $repo = 'XYphrodite/mining-fleet' }
 $version = Get-FleetEnv 'VERSION'
 $dirOverride = Get-FleetEnv 'DIR'
 $legacyDir = Join-Path $env:LOCALAPPDATA 'Programs\xmrig-fleet'

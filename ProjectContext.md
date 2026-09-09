@@ -9,11 +9,13 @@ XMRig on demand; a Spectre.Console TUI on the operator machine polls the whole f
 prices the electricity it burns, and reads the pool balance from Hashvault. The agent
 also drives lolMiner on nodes that mine a GPU coin.
 
-The product name is mining-fleet. The console ships as `mining-fleet.exe` with
+The product name is mining-fleet. GitHub is
+[XYphrodite/mining-fleet](https://github.com/XYphrodite/mining-fleet) (the old
+`xmrig-fleet` URL still redirects). The console ships as `mining-fleet.exe` with
 `xmrig-fleet.exe` as a copy of the same file; release zips are published under both
 names so an older console can still self-update. The agent executable, Windows
-service and GitHub repository `XYphrodite/xmrig-fleet` stay as they are until a later
-cut: `upgrade-agents` still has to find `xmrig-fleet-agent.exe` on the node.
+service and install path stay `xmrig-fleet-agent*` until a later cut:
+`upgrade-agents` still has to find `xmrig-fleet-agent.exe` on the node.
 
 **Platform**: .NET 8 (`net8.0`), Windows 10/11 today, Linux-ready
 **Language**: C# 12
@@ -409,7 +411,7 @@ event log: the agent stopped writing there after a node whose Event Log service 
 ### Installing the console
 
 ```powershell
-irm https://raw.githubusercontent.com/XYphrodite/xmrig-fleet/master/deploy/install.ps1 | iex
+irm https://raw.githubusercontent.com/XYphrodite/mining-fleet/master/deploy/install.ps1 | iex
 ```
 
 Unpacks the newest release into `%LOCALAPPDATA%\Programs\mining-fleet` (or the existing
@@ -728,9 +730,9 @@ mining-fleet/
 - [ ] Linux agent: systemd unit, `linux-static-x64` install path, `/sys` sensors
 
 ### Planned 📋
-- [ ] **Finish the rename onto the agent identity.** The console is `mining-fleet.exe`
-      with an `xmrig-fleet.exe` shim, and zips are published under both names. The agent
-      executable, Windows service, install path and GitHub repo are still `xmrig-fleet*`.
+- [ ] **Finish the rename onto the agent identity.** GitHub is `XYphrodite/mining-fleet`
+      and the console is `mining-fleet.exe` with an `xmrig-fleet.exe` shim. The agent
+      executable, Windows service and install path are still `xmrig-fleet-agent*`.
       Changing those without a release that still contains `xmrig-fleet-agent.exe` would
       leave a node mining with no agent.
 - [ ] **Finish GPU mining out of the CLI.** Four pieces, in the order they hurt: an interactive
@@ -942,10 +944,9 @@ mining-fleet/
 ## Document Information
 
 **Document Version**: v1.2
-**Last Updated**: 2026-09-08
+**Last Updated**: 2026-09-09
 **Product Version**: 1.16.0
 **Status**: Active
-**Repository**: `c:\Repos\xmrig-fleet` (branch `master`; GitHub and the
-folder are still named xmrig-fleet), published at
-[github.com/XYphrodite/xmrig-fleet](https://github.com/XYphrodite/xmrig-fleet)
+**Repository**: `c:\Repos\xmrig-fleet` (local folder; branch `master`), published at
+[github.com/XYphrodite/mining-fleet](https://github.com/XYphrodite/mining-fleet)
 **Related docs**: [README.md](README.md) (operator guide, Russian)
