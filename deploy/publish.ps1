@@ -28,6 +28,11 @@ Write-Host "Publishing agent ($Runtime) to $agentOut"
     -o $agentOut
 if ($LASTEXITCODE -ne 0) { throw 'Agent publish failed.' }
 
+$agentName = if ($Runtime -like 'win-*') { 'mining-fleet-agent.exe' } else { 'mining-fleet-agent' }
+$agentShim = if ($Runtime -like 'win-*') { 'xmrig-fleet-agent.exe' } else { 'xmrig-fleet-agent' }
+$agentExe = Join-Path $agentOut $agentName
+if (Test-Path $agentExe) { Copy-Item $agentExe (Join-Path $agentOut $agentShim) -Force }
+
 if (-not $SkipConsole) {
     $consoleOut = Join-Path $OutputPath 'console'
     Write-Host "Publishing console ($Runtime) to $consoleOut"

@@ -16,7 +16,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <Version>1.1.2</Version>
-    <AssemblyName>xmrig-fleet-agent</AssemblyName>
+    <AssemblyName>mining-fleet-agent</AssemblyName>
     <RootNamespace>MiningFleet.Agent</RootNamespace>
     <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>

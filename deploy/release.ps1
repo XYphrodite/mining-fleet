@@ -42,7 +42,7 @@ $number = $Version.TrimStart('v')
 # A running agent or console locks its own executable and fails the build. Only processes
 # started out of this repository can lock the build output, so an installed agent service
 # on this machine is deliberately left alone: killing it would stop a production node.
-foreach ($name in 'xmrig-fleet-agent', 'mining-fleet', 'xmrig-fleet') {
+foreach ($name in 'mining-fleet-agent', 'xmrig-fleet-agent', 'mining-fleet', 'xmrig-fleet') {
     Get-Process $name -ErrorAction SilentlyContinue |
         Where-Object { $_.Path -and $_.Path.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) } |
         ForEach-Object {
@@ -63,9 +63,11 @@ $targets = @(
         ShimTo = 'xmrig-fleet.exe'
     }
     @{
-        Name = 'xmrig-fleet-agent'
+        Name = 'mining-fleet-agent'
         Project = 'src\MiningFleet.Agent'
         Assets = @("mining-fleet-agent-$Runtime.zip", "xmrig-fleet-agent-$Runtime.zip")
+        ShimFrom = 'mining-fleet-agent.exe'
+        ShimTo = 'xmrig-fleet-agent.exe'
     }
 )
 

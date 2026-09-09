@@ -11,11 +11,12 @@ also drives lolMiner on nodes that mine a GPU coin.
 
 The product name is mining-fleet. GitHub is
 [XYphrodite/mining-fleet](https://github.com/XYphrodite/mining-fleet) (the old
-`xmrig-fleet` URL still redirects). The console ships as `mining-fleet.exe` with
-`xmrig-fleet.exe` as a copy of the same file; release zips are published under both
-names so an older console can still self-update. The agent executable, Windows
-service and install path stay `xmrig-fleet-agent*` until a later cut:
-`upgrade-agents` still has to find `xmrig-fleet-agent.exe` on the node.
+`xmrig-fleet` URL still redirects). Console and agent ship as `mining-fleet.exe` and
+`mining-fleet-agent.exe`, with `xmrig-fleet*` copies of the same files. An
+`upgrade-agents` on a node still running the old service name retargets SCM to
+`mining-fleet-agent` and starts it; the miner is a different process and is not
+stopped. The CPU job object stays `Local\xmrig-fleet-miner-cpu` so a restarted
+agent can still lift its own limit.
 
 **Platform**: .NET 8 (`net8.0`), Windows 10/11 today, Linux-ready
 **Language**: C# 12
@@ -29,7 +30,7 @@ service and install path stay `xmrig-fleet-agent*` until a later cut:
 
 | Layer | Technology | Notes |
 |-------|-----------|-------|
-| Node agent | ASP.NET Core Minimal API (`net8.0`) | `xmrig-fleet-agent.exe`, Kestrel on `0.0.0.0:47800` |
+| Node agent | ASP.NET Core Minimal API (`net8.0`) | `mining-fleet-agent.exe` (`xmrig-fleet-agent.exe` shim), Kestrel on `0.0.0.0:47800` |
 | Operator console | .NET 8 console + Spectre.Console | `mining-fleet.exe` (`xmrig-fleet.exe` shim), interactive TUI **and** one-shot commands |
 | Shared contracts | .NET 8 class library | DTOs referenced by both sides |
 | Transport | Plain HTTP over the tailnet | Shared-secret header, no TLS (see **Security Model**) |
@@ -153,7 +154,7 @@ The solution ([MiningFleet.slnx](MiningFleet.slnx)) contains **four** projects �
 ship, plus a test project.
 
 ### 1. **MiningFleet.Agent**
-**Type**: ASP.NET Core Minimal API -> `xmrig-fleet-agent.exe`
+**Type**: ASP.NET Core Minimal API -> `mining-fleet-agent.exe` (shim `xmrig-fleet-agent.exe`)
 **Location**: `src/MiningFleet.Agent/`
 **Purpose**: Runs on every mining PC. The only component that controls XMRig or reads
 hardware.
@@ -397,7 +398,8 @@ dotnet run --project src/MiningFleet.Console     # interactive TUI
 .\install-agent.ps1 -Token "<fleet token>" -SourcePath .\agent
 ```
 
-`install-agent.ps1` copies the payload to `C:\Program Files\xmrig-fleet-agent`, writes
+`install-agent.ps1` copies the payload to `C:\Program Files\mining-fleet-agent` (or the
+existing `xmrig-fleet-agent` folder, so a re-run does not fork the install), writes
 `appsettings.json`, registers the service with SCM restart actions, opens the port to
 `100.64.0.0/10` **only**, and verifies the API answers. It also kills any agent left running
 outside the service — one started by hand for diagnosis holds port 47800, and the service then
@@ -406,7 +408,7 @@ machine `PATH`, which is safe only because the agent reads `appsettings.json` fr
 directory rather than the current one. On failure it points at `agent.log`, not the Windows
 event log: the agent stopped writing there after a node whose Event Log service answers
 "RPC server unavailable" was taken down by the logging call itself. For Linux nodes,
-[deploy/xmrig-fleet-agent.service](deploy/xmrig-fleet-agent.service) is the systemd unit.
+[deploy/mining-fleet-agent.service](deploy/mining-fleet-agent.service) is the systemd unit.
 
 ### Installing the console
 
@@ -460,7 +462,7 @@ mining-fleet version
 ```
 mining-fleet/
 ├── src/
-│   ├── MiningFleet.Agent/          # node agent -> xmrig-fleet-agent.exe
+│   ├── MiningFleet.Agent/          # node agent -> mining-fleet-agent.exe
 │   │   ├── Program.cs             # minimal API, token middleware, service hosting
 │   │   ├── MinerService.cs        # XMRig process control + loopback API reader
 │   │   ├── HardwareService.cs     # sensors, power estimate, PawnIO diagnostics
@@ -487,7 +489,7 @@ mining-fleet/
 │   ├── publish.ps1                # self-contained publish for agent + console
 │   ├── install-agent.ps1          # service + firewall + verification on a node
 │   ├── install-openssh.ps1        # Windows OpenSSH server on a node, tailnet-scoped
-│   └── xmrig-fleet-agent.service  # systemd unit for Linux nodes
+│   └── mining-fleet-agent.service # systemd unit for Linux nodes
 ├── README.md                      # operator guide (Russian)
 ├── ProjectContext.md              # this document
 └── MiningFleet.slnx
@@ -728,13 +730,13 @@ mining-fleet/
       SID — but nothing has been installed yet. The node has no shell, which is why the Task
       Manager entry-point failure on it is still undiagnosed
 - [ ] Linux agent: systemd unit, `linux-static-x64` install path, `/sys` sensors
+- [ ] **Agent identity on a live node.** Code and the installer now ship
+      `mining-fleet-agent`; `upgrade-agents` writes a helper that creates the new
+      service, starts it, and deletes the old name, falling back to the old name if
+      the new one will not start. The miner is not stopped. Not yet run against a
+      live agent.
 
 ### Planned 📋
-- [ ] **Finish the rename onto the agent identity.** GitHub is `XYphrodite/mining-fleet`
-      and the console is `mining-fleet.exe` with an `xmrig-fleet.exe` shim. The agent
-      executable, Windows service and install path are still `xmrig-fleet-agent*`.
-      Changing those without a release that still contains `xmrig-fleet-agent.exe` would
-      leave a node mining with no agent.
 - [ ] **Finish GPU mining out of the CLI.** Four pieces, in the order they hurt: an interactive
       session launcher (without it one node cannot be driven from the console at all), a
       `GpuInstallerService` so lolMiner arrives the way XMRig does, a `GpuScreen` in the TUI, and a
@@ -945,7 +947,7 @@ mining-fleet/
 
 **Document Version**: v1.2
 **Last Updated**: 2026-09-09
-**Product Version**: 1.16.0
+**Product Version**: 1.17.0
 **Status**: Active
 **Repository**: `c:\Repos\xmrig-fleet` (local folder; branch `master`), published at
 [github.com/XYphrodite/mining-fleet](https://github.com/XYphrodite/mining-fleet)

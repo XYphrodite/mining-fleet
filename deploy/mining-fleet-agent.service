@@ -1,23 +1,23 @@
 # systemd unit for Linux mining nodes.
 #
-#   sudo cp -r ./agent /opt/xmrig-fleet-agent
-#   sudo cp xmrig-fleet-agent.service /etc/systemd/system/
-#   sudo systemctl daemon-reload && sudo systemctl enable --now xmrig-fleet-agent
+#   sudo cp -r ./agent /opt/mining-fleet-agent
+#   sudo cp mining-fleet-agent.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now mining-fleet-agent
 #
 # Root is needed to read hwmon sensors and to control the miner process.
 # Restrict the port to the tailnet, e.g.:
 #   sudo ufw allow in on tailscale0 to any port 47800 proto tcp
 
 [Unit]
-Description=xmrig fleet agent
+Description=mining-fleet agent
 After=network-online.target tailscaled.service
 Wants=network-online.target
 
 [Service]
 Type=notify
 User=root
-WorkingDirectory=/opt/xmrig-fleet-agent
-ExecStart=/opt/xmrig-fleet-agent/xmrig-fleet-agent
+WorkingDirectory=/opt/mining-fleet-agent
+ExecStart=/opt/mining-fleet-agent/mining-fleet-agent
 Restart=always
 RestartSec=5
 Environment=DOTNET_ENVIRONMENT=Production

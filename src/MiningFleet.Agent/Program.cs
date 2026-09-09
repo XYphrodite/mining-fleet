@@ -21,7 +21,7 @@ var basePath = AppContext.BaseDirectory;
 
 // Lets the same binary run in the foreground for debugging and as a service on a node.
 // Both calls are no-ops when the process was not started by the respective service manager.
-builder.Host.UseWindowsService(options => options.ServiceName = "xmrig-fleet-agent");
+builder.Host.UseWindowsService(options => options.ServiceName = AgentIdentity.RunningServiceName());
 builder.Host.UseSystemd();
 
 // UseWindowsService installs the event-log provider, which throws out of ILogger.Log when the
@@ -57,7 +57,7 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<MinerPauseService>
 builder.Services.AddHttpClient("github", client =>
 {
     // The GitHub API rejects requests without a User-Agent.
-    client.DefaultRequestHeaders.UserAgent.ParseAdd("xmrig-fleet-agent");
+    client.DefaultRequestHeaders.UserAgent.ParseAdd(AgentIdentity.Name);
     client.Timeout = TimeSpan.FromMinutes(5);
 });
 // Deliberately left on the system proxy. Bypassing it looked right - the console and the xmrig

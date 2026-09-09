@@ -27,13 +27,13 @@ The canonical project overview is auto-loaded via the import below. Keep it curr
 - **Never call `stop` or `restart` against a node without asking first.** The agent
   terminates *every* `xmrig` process on that machine by design, including one the
   operator started by hand. Stopping a rig costs real mining revenue.
-- **Kill `xmrig-fleet-agent.exe` (and `mining-fleet.exe` from this tree) before rebuilding.**
-  A running agent or console locks its own executable and `dotnet build` fails with
-  `MSB3021` / `MSB3027`.
-- The product is **mining-fleet**. GitHub is `XYphrodite/mining-fleet`. The console is
-  `mining-fleet.exe` with an `xmrig-fleet.exe` shim. Do not rename `xmrig-fleet-agent.exe`
-  or the Windows service without an identity-migration plan — those are what live nodes
-  and `upgrade-agents` look up. Release zips are published under both names.
+- **Kill `mining-fleet-agent.exe` / `xmrig-fleet-agent.exe` (and `mining-fleet.exe` from
+  this tree) before rebuilding.** A running agent or console locks its own executable and
+  `dotnet build` fails with `MSB3021` / `MSB3027`.
+- The product is **mining-fleet**. GitHub is `XYphrodite/mining-fleet`. Console and agent
+  ship under the new names with `xmrig-fleet*` copies so a live `upgrade-agents` can
+  retarget the Windows service without stopping the miner. The CPU job object stays
+  `Local\xmrig-fleet-miner-cpu` so a restarted agent can still lift its own limit.
 - **Run `dotnet test` after touching a screen.** Spectre renders prompts and widgets as
   markup, so any text the app did not author — a hostname, an OS name, a path, an error
   message — must go through `UiHelpers.Escape` or `UiHelpers.Text`. Unescaped `[` has

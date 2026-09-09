@@ -29,9 +29,6 @@ public sealed class AgentUpdateService
 {
     private const string BackupSuffix = ".old";
 
-    /// <summary>The Windows service this binary runs as; the restart helper needs the name.</summary>
-    private const string ServiceName = "xmrig-fleet-agent";
-
     /// <summary>Node-specific state that survives every update. See the class remarks.</summary>
     private static readonly string[] ProtectedFiles =
     [
@@ -61,13 +58,13 @@ public sealed class AgentUpdateService
     public async Task<AgentUpdateResultDto> UpdateAsync(AgentUpdateRequestDto request, CancellationToken ct)
     {
         var from = CurrentVersion;
-        var staging = Path.Combine(Path.GetTempPath(), $"xmrig-fleet-agent-update-{Guid.NewGuid():N}");
+        var staging = Path.Combine(Path.GetTempPath(), $"{AgentIdentity.Name}-update-{Guid.NewGuid():N}");
         var archive = staging + ".zip";
 
         try
         {
             var http = _httpFactory.CreateClient("github");
-            http.DefaultRequestHeaders.UserAgent.ParseAdd("xmrig-fleet-agent");
+            http.DefaultRequestHeaders.UserAgent.ParseAdd(AgentIdentity.Name);
 
             string url;
             string? tag = null;
@@ -95,9 +92,9 @@ public sealed class AgentUpdateService
             ZipFile.ExtractToDirectory(archive, staging, overwriteFiles: true);
 
             // Refuse to touch the installation unless the payload is really an agent build.
-            var exeName = OperatingSystem.IsWindows() ? "xmrig-fleet-agent.exe" : "xmrig-fleet-agent";
-            if (!File.Exists(Path.Combine(staging, exeName)))
-                return new AgentUpdateResultDto(false, $"Downloaded payload does not contain {exeName}; installation left untouched.", from, tag, false);
+            var exeName = AgentIdentity.FindPayloadExe(staging);
+            if (exeName is null)
+                return new AgentUpdateResultDto(false, $"Downloaded payload does not contain {string.Join(" or ", AgentIdentity.ExeFileNames)}; installation left untouched.", from, tag, false);
 
             var written = SwapIntoPlace(staging, InstallDirectory);
             _log.LogWarning("Agent update: {Count} files replaced, restarting into {Version}", written, tag ?? "the new build");
@@ -146,22 +143,16 @@ public sealed class AgentUpdateService
         // here: this process has to be gone and the service fully stopped, and how long that
         // takes depends on what the miner and the sensors are doing as they shut down. A
         // `sc start` against a service that is already running is a harmless 1056.
-        const string Wait = "ping -n {0} 127.0.0.1 > nul";
-        var start = $"sc start \"{ServiceName}\"";
-        var script = string.Join(" & ",
-            string.Format(Wait, 6), start,
-            string.Format(Wait, 11), start,
-            string.Format(Wait, 21), start);
-
         try
         {
-            using var helper = Process.Start(new ProcessStartInfo("cmd.exe", $"/c {script}")
+            var helperPath = WriteRestartHelper(InstallDirectory);
+            using var helper = Process.Start(new ProcessStartInfo("cmd.exe", $"/c \"{helperPath}\"")
             {
                 CreateNoWindow = true,
                 UseShellExecute = false,
             });
         }
-        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException or UnauthorizedAccessException)
         {
             _log.LogError(ex, "Could not schedule the restart; the node may need starting by hand");
         }
@@ -169,6 +160,57 @@ public sealed class AgentUpdateService
         _log.LogWarning("Agent update: replaced, leaving so the new binary can take over");
         Environment.Exit(0);
     });
+
+    /// <summary>
+    /// Hands the node from the old service name to the new one after this process is gone.
+    /// The miner is a different process and is not touched. If the new service will not
+    /// start, the helper falls back to the name the node was already running under.
+    /// </summary>
+    public static string WriteRestartHelper(string installDirectory)
+    {
+        var newExe = Path.Combine(installDirectory, AgentIdentity.ExeFileName);
+        var legacyExe = Path.Combine(installDirectory, AgentIdentity.LegacyExeFileName);
+        var exe = File.Exists(newExe) ? newExe : legacyExe;
+        var path = Path.Combine(Path.GetTempPath(), $"{AgentIdentity.Name}-restart-{Guid.NewGuid():N}.cmd");
+        var n = AgentIdentity.ServiceName;
+        var o = AgentIdentity.LegacyServiceName;
+        var script =
+            $"""
+            @echo off
+            setlocal
+            set NEW={n}
+            set OLD={o}
+            set "EXE={exe}"
+            ping -n 6 127.0.0.1 > nul
+            call :migrate
+            ping -n 11 127.0.0.1 > nul
+            call :migrate
+            ping -n 21 127.0.0.1 > nul
+            call :migrate
+            del "%~f0"
+            exit /b 0
+
+            :migrate
+            sc query %NEW% > nul 2>&1
+            if errorlevel 1 sc create %NEW% binPath= "%EXE%" start= auto DisplayName= "mining-fleet agent" > nul
+            sc config %NEW% binPath= "%EXE%" start= auto DisplayName= "mining-fleet agent" > nul
+            sc description %NEW% "Controls xmrig and reports hardware telemetry to the mining-fleet console." > nul
+            sc failure %NEW% reset= 86400 actions= restart/5000/restart/15000/restart/60000 > nul
+            sc query %NEW% | findstr /C:"RUNNING" > nul
+            if not errorlevel 1 goto started
+            sc start %NEW% > nul
+            sc query %NEW% | findstr /C:"RUNNING" > nul
+            if not errorlevel 1 goto started
+            sc config %OLD% binPath= "%EXE%" > nul
+            sc start %OLD% > nul
+            exit /b 0
+            :started
+            sc delete %OLD% > nul
+            exit /b 0
+            """;
+        File.WriteAllText(path, script, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        return path;
+    }
 
     /// <summary>
     /// Copies the payload over the installation, renaming any file in use out of the way first.

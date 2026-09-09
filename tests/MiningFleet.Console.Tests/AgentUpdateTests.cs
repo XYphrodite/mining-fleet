@@ -66,6 +66,33 @@ public sealed class AgentUpdateTests
     }
 
     [Fact]
+    public void A_payload_is_accepted_under_either_agent_exe_name()
+    {
+        using var dir = new TempDirectory();
+        Assert.Null(AgentIdentity.FindPayloadExe(dir.Path));
+
+        File.WriteAllText(Path.Combine(dir.Path, "xmrig-fleet-agent.exe"), "legacy");
+        Assert.Equal("xmrig-fleet-agent.exe", AgentIdentity.FindPayloadExe(dir.Path));
+
+        File.WriteAllText(Path.Combine(dir.Path, "mining-fleet-agent.exe"), "new");
+        Assert.Equal("mining-fleet-agent.exe", AgentIdentity.FindPayloadExe(dir.Path));
+    }
+
+    [Fact]
+    public void The_restart_helper_starts_the_new_service_and_falls_back_to_the_old()
+    {
+        using var dir = new TempDirectory();
+        File.WriteAllText(Path.Combine(dir.Path, AgentIdentity.ExeFileName), "agent");
+        var helper = AgentUpdateService.WriteRestartHelper(dir.Path);
+        var text = File.ReadAllText(helper);
+        Assert.Contains("sc start %NEW%", text);
+        Assert.Contains("sc delete %OLD%", text);
+        Assert.Contains("sc start %OLD%", text);
+        Assert.Contains(dir.Path, text);
+        File.Delete(helper);
+    }
+
+    [Fact]
     public void A_release_tag_matches_the_four_part_assembly_version_it_produced()
     {
         // release.ps1 stamps v1.4.0 as 1.4.0.0, so a plain string comparison would re-download
