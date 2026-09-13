@@ -16,6 +16,7 @@ public sealed class HardwareService : IDisposable
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Computer _computer;
     private readonly UpdateVisitor _visitor = new();
+    private readonly NvidiaPowerReader _nvidiaPower = new();
     private bool _opened;
 
     public HardwareService(MinerConfigStore config, ILogger<HardwareService> log)
@@ -41,7 +42,10 @@ public sealed class HardwareService : IDisposable
         {
             EnsureOpen();
             _computer.Accept(_visitor);
-            return Build();
+            var needsFallback = _computer.Hardware.Any(h => h.HardwareType == HardwareType.GpuNvidia
+                && Find(h, SensorType.Power, "GPU Package") is null && Find(h, SensorType.Power, "GPU Power") is null);
+            var fallback = needsFallback ? await _nvidiaPower.ReadAsync(ct) : null;
+            return Build(fallback);
         }
         catch (Exception ex)
         {
@@ -67,7 +71,7 @@ public sealed class HardwareService : IDisposable
         _opened = true;
     }
 
-    private HardwareDto Build()
+    private HardwareDto Build(IReadOnlyDictionary<string, double>? nvidiaPower)
     {
         var sensors = new List<SensorDto>();
         var gpus = new List<GpuDto>();
@@ -100,11 +104,19 @@ public sealed class HardwareService : IDisposable
                     break;
 
                 case HardwareType.GpuNvidia or HardwareType.GpuAmd or HardwareType.GpuIntel:
+                    double? watts = Find(hardware, SensorType.Power, "GPU Package") ?? Find(hardware, SensorType.Power, "GPU Power");
+                    if (watts is null && hardware.HardwareType == HardwareType.GpuNvidia
+                        && nvidiaPower?.TryGetValue(hardware.Name, out var fallbackWatts) == true)
+                    {
+                        watts = fallbackWatts;
+                        sensors.Add(new SensorDto(hardware.Name, "GPU Power (nvidia-smi draw / samples avg)",
+                            "Power", fallbackWatts, "W"));
+                    }
                     gpus.Add(new GpuDto(
                         hardware.Name,
                         PickTemperature(hardware),
                         Find(hardware, SensorType.Load, "GPU Core"),
-                        Find(hardware, SensorType.Power, "GPU Package") ?? Find(hardware, SensorType.Power, "GPU Power"),
+                        watts,
                         Find(hardware, SensorType.SmallData, "GPU Memory Used"),
                         Find(hardware, SensorType.SmallData, "GPU Memory Total")));
                     break;

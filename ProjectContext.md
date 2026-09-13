@@ -171,6 +171,7 @@ hardware.
 |-------|----------------|
 | `MinerService` | Start/stop/restart XMRig, read `/2/summary` and `/2/backends` off the loopback API, keep the last 200 output lines |
 | `HardwareService` | LibreHardwareMonitor sensors, power estimate, PawnIO diagnostics |
+| `NvidiaPowerReader` | Read-only NVIDIA power fallback via bounded, cached `nvidia-smi` queries; PCI-matched sample averages when draw is unavailable |
 | `InstallerService` | Resolve the right GitHub release asset, download, unpack, repoint the config |
 | `AgentUpdateService` | Update the agent itself from a mining-fleet release and restart into it |
 | `PerformanceCounterPump` | Polls Windows' performance counters. Tried as a fix for the hashrate gap below and did **not** work; kept only because it is harmless and rules the idea out |
@@ -238,6 +239,7 @@ chasing coverage.
 | `EconomicsTests` | Per-node tariffs summed separately, the income formula, idle nodes not charged, measured power beating the configured fallback |
 | `UpdateAssetTests` | `update` matches the console asset and never the agent one that sits beside it in the same release |
 | `TailnetDiscoveryTests` | Self uses loopback without depending on its display name; peers use resolvable MagicDNS or IPv4; existing local endpoint aliases do not create duplicate nodes |
+| `NvidiaPowerTests` | Missing NVIDIA draw uses a PCI-matched sample average, never a power limit, peak, memory/module reading, or another identical card's watts; invalid readings remain unknown |
 | `AutoStartTests` | An autostart push keeps the tuned ladder and the rest of the node's config; the setting survives an agent restart; the node's own answer beats the installed default while an untold node still follows it; autostart does not restart a miner the throttle stopped; and "unset" reads differently from "off" |
 | `GpuMiningTests` | A push that turns the card on keeps the lolMiner path and the session flag the node already knew; a push replaces the whole set of pause conditions rather than inheriting one nobody asked for; a node override replaces only what it names; and the stand-down is immediate while the return waits out the quiet period, restarted by any interruption. Since 1.13.1 also: a named process stands the card down even when the rule watches a port too — the defect that let a game freeze `mks68i7rtx` — every reason is reported rather than the first, a quiet rule names what it was watching, and the singular process field is folded in beside the list |
 | `CpuBudgetTests` | Full speed is one thread per core until 2 MB of L3 each runs out, checked against what xmrig chose on all three nodes; a ceiling rounds **down**, because rounding 67% of twelve up to nine runs a node at 75% under a setting that says 67; a tiny percentage gives a slow miner and never a stopped one; and for the governor — an unreadable sensor holds rather than guessing in either direction, one thread is the floor even when still too hot, a second thread is not dropped before the first has settled, a spike forgets the cool minutes banked before it, and the percentage caps how far the thermal recovery may climb |
@@ -772,13 +774,14 @@ mining-fleet/
       runs over names — what has been checked live is `/info`, not a full `status` fan-out
 
 ### Known Issues / Risks ⚠️
-- **The RTX 4060 does report its power draw; the agent just cannot reach it.** Corrected on
-  2026-09-07 from an operator's HWMonitor report: **89.31 W** at 43.40 A and 1.06 V, against a
-  115 W limit. NVML does not have it — `nvidia-smi -q -d POWER` on driver 591.86 answers `N/A` to
-  average, instantaneous and memory power while reporting every limit correctly — and neither does
-  LibreHardwareMonitor, which is what the agent uses. **NVAPI has it.** So this fleet's previous
-  "~110 W uncounted" was wrong twice over: the figure exists, and it is about 20 W lower than the
-  guess. Reaching it from the agent means calling NVAPI directly, which nothing here does yet.
+- **NVIDIA power can be missing from NVML/LHM while `nvidia-smi` samples still work.**
+  On 2026-09-13 the previously deployed i7 agent reported **100.68 W** through its
+  `GPU Power (nvidia-smi draw / samples avg)` sensor, but that fallback was absent from
+  the tracked source. The old conclusion that direct NVAPI was required was not established:
+  `N/A` draw fields do not rule out `Power Samples / Avg` in `nvidia-smi -q -d POWER`.
+  `NvidiaPowerReader` restores this fallback with a ten-second cache and a 1.5-second limit
+  per subprocess. Parser tests exclude limits, peaks, memory/module readings and ambiguous
+  duplicate GPU models. Live validation of the restored implementation is still pending.
 - **Stopping the CPU miner can cost its huge pages, and a restart does not get them back.**
   Measured on `desktop-ib88isg` on 2026-09-08: the pause rule stopped the miner for a game and it
   resumed afterwards with **142 huge pages of 1182**, running 3,650 H/s against a healthy 6,273.
