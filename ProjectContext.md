@@ -211,7 +211,7 @@ install/push/autostart/logs), `NodesScreen` (discover/add/edit/test), `HardwareS
 | `MarketService` | Hashvault wallet/pool parsing, atomic-unit scaling, price, 30s cache |
 | `GpuPoolService` | What a card actually earned, which Hashvault cannot answer because the card mines another coin. Reads Kryptex, works the pool and address out of the node's own GPU settings, and takes its daily rate from payments the pool really made rather than from a counter |
 | `Economics` | Electricity cost, expected income, per-node profit split |
-| `TailscaleService` | Parses `tailscale status --json` for node discovery, storing the MagicDNS name rather than the address when this machine resolves it |
+| `TailscaleService` | Parses `tailscale status --json`; Self uses IPv4 loopback, peers use resolvable MagicDNS or IPv4; rediscovery recognises existing endpoint aliases |
 | `FleetConfig` | `fleet.json` load/save (override with `MINING_FLEET_CONFIG` or `XMRIG_FLEET_CONFIG`) |
 | `UpdateService` | GitHub release lookup, streaming download, in-place file swap |
 | `Updater` | The `update` command, its progress bar, and the start-up "newer version" notice |
@@ -237,7 +237,7 @@ chasing coverage.
 | `MarkupSafetyTests` | Prompts and badges render data holding `[` — the crash that reached the operator twice. Drives real prompts through `Spectre.Console.Testing`, and asserts escaping never reaches the stored value |
 | `EconomicsTests` | Per-node tariffs summed separately, the income formula, idle nodes not charged, measured power beating the configured fallback |
 | `UpdateAssetTests` | `update` matches the console asset and never the agent one that sits beside it in the same release |
-| `TailnetDiscoveryTests` | Discovery stores the MagicDNS name only when it resolves here, falls back to the address when it does not or when the tailnet has MagicDNS off, and skips a machine with no tailnet address |
+| `TailnetDiscoveryTests` | Self uses loopback without depending on its display name; peers use resolvable MagicDNS or IPv4; existing local endpoint aliases do not create duplicate nodes |
 | `AutoStartTests` | An autostart push keeps the tuned ladder and the rest of the node's config; the setting survives an agent restart; the node's own answer beats the installed default while an untold node still follows it; autostart does not restart a miner the throttle stopped; and "unset" reads differently from "off" |
 | `GpuMiningTests` | A push that turns the card on keeps the lolMiner path and the session flag the node already knew; a push replaces the whole set of pause conditions rather than inheriting one nobody asked for; a node override replaces only what it names; and the stand-down is immediate while the return waits out the quiet period, restarted by any interruption. Since 1.13.1 also: a named process stands the card down even when the rule watches a port too — the defect that let a game freeze `mks68i7rtx` — every reason is reported rather than the first, a quiet rule names what it was watching, and the singular process field is folded in beside the list |
 | `CpuBudgetTests` | Full speed is one thread per core until 2 MB of L3 each runs out, checked against what xmrig chose on all three nodes; a ceiling rounds **down**, because rounding 67% of twelve up to nine runs a node at 75% under a setting that says 67; a tiny percentage gives a slow miner and never a stopped one; and for the governor — an unreadable sensor holds rather than guessing in either direction, one thread is the floor even when still too hot, a second thread is not dropped before the first has settled, a spike forgets the cool minutes banked before it, and the percentage caps how far the thermal recovery may climb |
@@ -500,6 +500,11 @@ mining-fleet/
 ## Development Status
 
 ### Implemented & Verified Live ✅
+- [x] **Fleet checked from the actual operator machine, Xeon, on 2026-09-13.** Its three
+      enabled IPv4 endpoints returned full snapshots. Dev was idle and had no stored autostart;
+      autostart was enabled and `/miner/start` launched XMRig, followed by accepted shares.
+      The effective Tailscale filter allowed Xeon's address, so the earlier ACL diagnosis was
+      not substantiated. A Tailscale discovery ping alone does not verify the agent's TCP port.
 - [x] Agent HTTP API with shared-secret auth (unauthenticated request returns `401`)
 - [x] Hardware read on real silicon — CPU model, 6c/12t split, motherboard, RAM, GPU temperature/power/VRAM
 - [x] Physical-core counting that survives SMT thread-named sensors
@@ -946,7 +951,7 @@ mining-fleet/
 ## Document Information
 
 **Document Version**: v1.2
-**Last Updated**: 2026-09-09
+**Last Updated**: 2026-09-13
 **Product Version**: 1.17.0
 **Status**: Active
 **Repository**: `c:\Repos\xmrig-fleet` (local folder; branch `master`), published at

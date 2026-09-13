@@ -7,13 +7,23 @@ namespace MiningFleet.Console;
 
 /// <summary>
 /// One machine in the tailnet. <see cref="Address"/> is always the 100.x address;
-/// <see cref="DnsName"/> is its MagicDNS name, and is null unless the name can actually be
-/// resolved from this machine.
+/// <see cref="DnsName"/> is its advertised MagicDNS name; ListAsync drops it when the local
+/// resolver cannot use MagicDNS. Self identifies the machine running discovery, not a UI label.
 /// </summary>
 public sealed record TailnetMachine(string Name, string Address, string? DnsName, string Os, bool Online, string? LastSeen, bool IsSelf = false)
 {
     /// <summary>What to store as a node's host: loopback for the local agent, MagicDNS or IPv4 for peers.</summary>
     public string Host => IsSelf ? "127.0.0.1" : DnsName ?? Address;
+
+    /// <summary>Recognise an existing node regardless of which of its endpoint forms was saved.</summary>
+    public bool MatchesHost(string host)
+    {
+        host = host.Trim().TrimEnd('.');
+        return string.Equals(host, Address, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(host, DnsName, StringComparison.OrdinalIgnoreCase)
+            || (IsSelf && (host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+                || (IPAddress.TryParse(host, out var address) && IPAddress.IsLoopback(address))));
+    }
 }
 
 /// <summary>
@@ -57,7 +67,7 @@ public static class TailscaleService
 
     /// <summary>
     /// Keeps MagicDNS for peers only when it resolves from this machine. The local node remains
-    /// on IPv4 loopback through <see cref="Host"/> regardless of this result.
+    /// on IPv4 loopback through <see cref="TailnetMachine.Host"/> regardless of this result.
     /// </summary>
     public static async Task<IReadOnlyList<TailnetMachine>> ResolvableNamesAsync(
         IReadOnlyList<TailnetMachine> machines,

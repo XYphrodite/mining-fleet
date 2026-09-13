@@ -89,8 +89,7 @@ public sealed class NodesScreen
             return;
         }
 
-        var known = _config.Nodes.Select(n => n.Host).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var selectable = machines.Where(m => !known.Contains(m.Address) && !known.Contains(m.Host)).ToList();
+        var selectable = machines.Where(m => !_config.Nodes.Any(n => m.MatchesHost(n.Host))).ToList();
         if (selectable.Count == 0)
         {
             AnsiConsole.MarkupLine("[green]Every tailnet machine is already in the fleet.[/]");

@@ -3,8 +3,8 @@ using MiningFleet.Console;
 namespace MiningFleet.Console.Tests;
 
 /// <summary>
-/// Node discovery writes a Tailscale IPv4 address into fleet.json so polling does not depend on
-/// MagicDNS or on routing a machine's own Tailscale name back to itself.
+/// Discovery uses loopback for Self and resolvable MagicDNS (or IPv4) for peers. Recognising
+/// already saved endpoint forms avoids duplicate nodes after changing the discovery policy.
 /// </summary>
 public sealed class TailnetDiscoveryTests
 {
@@ -50,6 +50,18 @@ public sealed class TailnetDiscoveryTests
         var self = Parse().Single(m => m.Name == "operator-pc");
 
         Assert.Equal("127.0.0.1", self.Host);
+    }
+
+    [Theory]
+    [InlineData("100.89.154.125")]
+    [InlineData("OPERATOR-PC.tail08a9a5.ts.net.")]
+    [InlineData("127.0.0.1")]
+    [InlineData("localhost")]
+    public void RediscoveryRecognisesTheLocalNodeSavedUnderAnyEndpoint(string savedHost)
+    {
+        var self = Parse().Single(m => m.Name == "operator-pc");
+        Assert.True(self.MatchesHost(savedHost));
+        Assert.False(Parse().Single(m => m.Name == "rig-1").MatchesHost(savedHost));
     }
 
     [Fact]
