@@ -507,6 +507,14 @@ mining-fleet/
       autostart was enabled and `/miner/start` launched XMRig, followed by accepted shares.
       The effective Tailscale filter allowed Xeon's address, so the earlier ACL diagnosis was
       not substantiated. A Tailscale discovery ping alone does not verify the agent's TCP port.
+- [x] **v1.17.6 deployed to Xeon's console and all three agents on 2026-09-13.** Nine full
+      status calls from Xeon over three rounds completed without API errors (63–438 ms).
+      The installed console reported **3 mining, 3 online, 3 total, 13.27 kH/s**: Xeon
+      5.33 kH/s, i7 6.34 kH/s, Dev 1.59 kH/s. All three retain CPU autostart, protected miner
+      configuration and their pre-update CPU PIDs. The configured i7 GPU miner also remained
+      running at about 4.39 g/s with accepted shares; no GPU settings were invented for the
+      other two nodes. The migrated console config hash stayed unchanged across updates.
+      Dev obtained only 0.51% huge pages (rounded to 1% by the panel); no reboot was performed.
 - [x] Agent HTTP API with shared-secret auth (unauthenticated request returns `401`)
 - [x] Hardware read on real silicon — CPU model, 6c/12t split, motherboard, RAM, GPU temperature/power/VRAM
 - [x] Physical-core counting that survives SMT thread-named sensors
@@ -767,13 +775,18 @@ mining-fleet/
 - [ ] Alerting: node offline, miner dead, temperature over threshold
 - [ ] Per-node XMRig config templates (thread pinning, huge pages, MSR flags)
 - [ ] Automatic miner restart when a node reports zero hashrate while mining
-- [ ] **Move the nodes already in `fleet.json` onto their MagicDNS names.** Discovery stores a
-      name now, but only for machines it adds: a fleet built before that still polls by address,
-      and the only way across is **Nodes → Edit node**, one node at a time. Offer the swap during
-      discovery for machines already known, or as a one-shot command, and confirm a whole poll
-      runs over names — what has been checked live is `/info`, not a full `status` fan-out
+- [ ] **Offer migration of existing node addresses during discovery or as a one-shot command.**
+      Discovery only chooses addresses for newly added nodes; the UI migration path remains
+      **Nodes → Edit node**. The Xeon fleet was migrated and full status polling verified on
+      2026-09-13: remote peers use their actual MagicDNS names (resolving to IPv4), and Xeon's
+      own agent uses `127.0.0.1`. This does not automatically migrate other saved fleet files.
 
 ### Known Issues / Risks ⚠️
+- **Repeated console updates can collide with a locked `.old` executable.** On Xeon,
+  still-open v1.17.4 panels held `mining-fleet.exe.old`, preventing the next in-place rename.
+  Moving that single file into a separate installation-local backup directory allowed the
+  v1.17.6 updater to finish without terminating miners or deleting the old image. Existing
+  panel windows still run their loaded version and must be reopened to use the new binary.
 - **NVIDIA power can be missing from NVML/LHM while `nvidia-smi` samples still work.**
   On 2026-09-13 the previously deployed i7 agent reported **100.68 W** through its
   `GPU Power (nvidia-smi draw / samples avg)` sensor, but that fallback was absent from
@@ -781,7 +794,8 @@ mining-fleet/
   `N/A` draw fields do not rule out `Power Samples / Avg` in `nvidia-smi -q -d POWER`.
   `NvidiaPowerReader` restores this fallback with a ten-second cache and a 1.5-second limit
   per subprocess. Parser tests exclude limits, peaks, memory/module readings and ambiguous
-  duplicate GPU models. Live validation of the restored implementation is still pending.
+  duplicate GPU models. Verified live on i7 with v1.17.6: **100.59 W** GPU power and
+  **242.4 W** estimated system total, CPU/GPU mining uninterrupted and miner config unchanged.
 - **Stopping the CPU miner can cost its huge pages, and a restart does not get them back.**
   Measured on `desktop-ib88isg` on 2026-09-08: the pause rule stopped the miner for a game and it
   resumed afterwards with **142 huge pages of 1182**, running 3,650 H/s against a healthy 6,273.
