@@ -3,9 +3,8 @@ using MiningFleet.Console;
 namespace MiningFleet.Console.Tests;
 
 /// <summary>
-/// Node discovery writes a host into fleet.json and every later poll depends on it resolving.
-/// A MagicDNS name that does not resolve on the operator's machine turns the whole fleet into
-/// connection errors, so the choice between name and address is guarded here.
+/// Node discovery writes a Tailscale IPv4 address into fleet.json so polling does not depend on
+/// MagicDNS or on routing a machine's own Tailscale name back to itself.
 /// </summary>
 public sealed class TailnetDiscoveryTests
 {
@@ -42,6 +41,15 @@ public sealed class TailnetDiscoveryTests
 
         Assert.Equal("rig-1.tail08a9a5.ts.net", rig.DnsName);
         Assert.Equal("100.105.87.52", rig.Address);
+        Assert.Equal("rig-1.tail08a9a5.ts.net", rig.Host);
+    }
+
+    [Fact]
+    public void LocalMachineUsesIpv4LoopbackForItsAgent()
+    {
+        var self = Parse().Single(m => m.Name == "operator-pc");
+
+        Assert.Equal("127.0.0.1", self.Host);
     }
 
     [Fact]
@@ -51,7 +59,7 @@ public sealed class TailnetDiscoveryTests
     }
 
     [Fact]
-    public async Task AResolvingNameIsWhatGetsStored()
+    public async Task ResolvingMagicDnsNameIsStoredForRemoteNodes()
     {
         var machines = await TailscaleService.ResolvableNamesAsync(Parse(), Resolves);
 

@@ -98,12 +98,7 @@ public sealed class NodesScreen
             return;
         }
 
-        // Say which form is about to be stored: a MagicDNS name keeps working when a node's
-        // tailnet address changes, and the address is all that is left on a machine that does
-        // not resolve those names.
-        AnsiConsole.MarkupLine(selectable.Any(m => m.DnsName is not null)
-            ? "[grey]MagicDNS resolves here - nodes are added by name.[/]"
-            : "[grey]MagicDNS does not resolve here - nodes are added by address.[/]");
+        AnsiConsole.MarkupLine("[grey]Remote nodes use MagicDNS when available; this machine uses 127.0.0.1.[/]");
         AnsiConsole.WriteLine();
 
         var picked = AnsiConsole.Prompt(new MultiSelectionPrompt<TailnetMachine>()

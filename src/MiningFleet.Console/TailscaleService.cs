@@ -10,10 +10,10 @@ namespace MiningFleet.Console;
 /// <see cref="DnsName"/> is its MagicDNS name, and is null unless the name can actually be
 /// resolved from this machine.
 /// </summary>
-public sealed record TailnetMachine(string Name, string Address, string? DnsName, string Os, bool Online, string? LastSeen)
+public sealed record TailnetMachine(string Name, string Address, string? DnsName, string Os, bool Online, string? LastSeen, bool IsSelf = false)
 {
-    /// <summary>What to store as a node's host: the MagicDNS name when it resolves, the address otherwise.</summary>
-    public string Host => DnsName ?? Address;
+    /// <summary>What to store as a node's host: loopback for the local agent, MagicDNS or IPv4 for peers.</summary>
+    public string Host => IsSelf ? "127.0.0.1" : DnsName ?? Address;
 }
 
 /// <summary>
@@ -27,6 +27,7 @@ public static class TailscaleService
         var json = await RunAsync(ct);
         if (json is null) return [];
 
+        // Use MagicDNS for peers, but never route the local agent through its own Tailscale name.
         return await ResolvableNamesAsync(Parse(json), ct: ct);
     }
 
@@ -43,7 +44,7 @@ public static class TailscaleService
         var machines = new List<TailnetMachine>();
 
         if (root.TryGetProperty("Self", out var self))
-            Add(self, magicDns, machines);
+            Add(self, magicDns, machines, isSelf: true);
 
         if (root.TryGetProperty("Peer", out var peers) && peers.ValueKind == JsonValueKind.Object)
         {
@@ -55,11 +56,8 @@ public static class TailscaleService
     }
 
     /// <summary>
-    /// Drops the MagicDNS names if this machine cannot resolve them. A tailnet can have MagicDNS
-    /// on while the operator's own machine does not use Tailscale's resolver - accept-dns off, or
-    /// another DNS server winning - and a name written into fleet.json would then never resolve,
-    /// turning every node into a connection error. One lookup answers it for the whole list;
-    /// MagicDNS resolves offline peers too, so any name in the list will do as the probe.
+    /// Keeps MagicDNS for peers only when it resolves from this machine. The local node remains
+    /// on IPv4 loopback through <see cref="Host"/> regardless of this result.
     /// </summary>
     public static async Task<IReadOnlyList<TailnetMachine>> ResolvableNamesAsync(
         IReadOnlyList<TailnetMachine> machines,
@@ -87,7 +85,7 @@ public static class TailscaleService
             && !string.IsNullOrEmpty(suffix.GetString());
     }
 
-    private static void Add(JsonElement element, bool magicDns, List<TailnetMachine> into)
+    private static void Add(JsonElement element, bool magicDns, List<TailnetMachine> into, bool isSelf = false)
     {
         var name = element.TryGetProperty("HostName", out var h) ? h.GetString() ?? "" : "";
         if (name.Length == 0) return;
@@ -109,7 +107,8 @@ public static class TailscaleService
             dnsName.Length > 0 ? dnsName : null,
             element.TryGetProperty("OS", out var os) ? os.GetString() ?? "" : "",
             element.TryGetProperty("Online", out var online) && online.ValueKind == JsonValueKind.True,
-            element.TryGetProperty("LastSeen", out var seen) ? seen.GetString() : null));
+            element.TryGetProperty("LastSeen", out var seen) ? seen.GetString() : null,
+            isSelf));
     }
 
     private static async Task<bool> ResolvesAsync(string name, CancellationToken ct)
