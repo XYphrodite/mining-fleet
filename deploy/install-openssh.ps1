@@ -239,8 +239,13 @@ if (Get-Service -Name sshd -ErrorAction SilentlyContinue) {
     Write-Host '==> sshd is already installed on this node'
 }
 else {
-    $capability = Get-WindowsCapability -Online -Name 'OpenSSH.Server*' |
-        Sort-Object Name | Select-Object -First 1
+    $capability = $null
+    try {
+        $capability = Get-WindowsCapability -Online -Name 'OpenSSH.Server*' |
+            Sort-Object Name | Select-Object -First 1
+    } catch {
+        Write-Host "    Get-WindowsCapability failed: $($_.Exception.Message) -- falling back to MSI" -ForegroundColor Yellow
+    }
 
     if ($capability -and $capability.State -eq 'Installed') {
         Write-Host "==> $($capability.Name) already installed"
