@@ -111,7 +111,21 @@ public sealed class AgentClient : IDisposable
             Content = JsonContent.Create(request, options: JsonOptions),
         };
         using var response = await http.SendAsync(message, ct);
-        return await response.Content.ReadFromJsonAsync<InstallResultDto>(JsonOptions, ct);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            return new InstallResultDto(false, "this agent is too old to install lolMiner; run mining-fleet upgrade-agents", null, null);
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync(ct);
+            return new InstallResultDto(false, string.IsNullOrWhiteSpace(body) ? $"the agent returned HTTP {(int)response.StatusCode}" : body, null, null);
+        }
+        try
+        {
+            return await response.Content.ReadFromJsonAsync<InstallResultDto>(JsonOptions, ct);
+        }
+        catch (System.Text.Json.JsonException ex)
+        {
+            return new InstallResultDto(false, $"invalid JSON from agent: {ex.Message}", null, null);
+        }
     }
 
     public async Task<IReadOnlyList<MinerInventoryItemDto>?> GetMinersAsync(CancellationToken ct)
@@ -138,7 +152,21 @@ public sealed class AgentClient : IDisposable
             Content = JsonContent.Create(request, options: JsonOptions),
         };
         using var response = await http.SendAsync(message, ct);
-        return await response.Content.ReadFromJsonAsync<UninstallResultDto>(JsonOptions, ct);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            return new UninstallResultDto(false, "this agent is too old to uninstall; run mining-fleet upgrade-agents");
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync(ct);
+            return new UninstallResultDto(false, string.IsNullOrWhiteSpace(body) ? $"the agent returned HTTP {(int)response.StatusCode}" : body);
+        }
+        try
+        {
+            return await response.Content.ReadFromJsonAsync<UninstallResultDto>(JsonOptions, ct);
+        }
+        catch (System.Text.Json.JsonException ex)
+        {
+            return new UninstallResultDto(false, $"invalid JSON from agent: {ex.Message}");
+        }
     }
 
     /// <summary>
