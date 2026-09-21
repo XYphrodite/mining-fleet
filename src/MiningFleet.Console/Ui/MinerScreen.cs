@@ -25,7 +25,9 @@ public sealed class MinerScreen
                     "Start mining",
                     "Stop mining",
                     "Restart mining",
-                    "Install / update xmrig",
+                    "Install / update xmrig (CPU)",
+                    "Install / update lolMiner (GPU)",
+                    "Remove miner",
                     "Push pool settings to nodes",
                     "Start mining when the node boots",
                     "Session monitor (hashrate workaround)",
@@ -38,7 +40,9 @@ public sealed class MinerScreen
                 case "Start mining": await RunAsync("Starting", (c, t) => c.StartAsync(t), ct); break;
                 case "Stop mining": await RunAsync("Stopping", (c, t) => c.StopAsync(t), ct); break;
                 case "Restart mining": await RunAsync("Restarting", (c, t) => c.RestartAsync(t), ct); break;
-                case "Install / update xmrig": await InstallAsync(ct); break;
+                case "Install / update xmrig (CPU)": await InstallAsync(ct); break;
+                case "Install / update lolMiner (GPU)": await InstallGpuAsync(ct); break;
+                case "Remove miner": await RemoveMinerAsync(ct); break;
                 case "Push pool settings to nodes": await PushAsync(ct); break;
                 case "Start mining when the node boots": await AutoStartAsync(ct); break;
                 case "Session monitor (hashrate workaround)": await SessionMonitorAsync(ct); break;
@@ -134,6 +138,199 @@ public sealed class MinerScreen
         foreach (var node in nodes) node.MinerPath = targetPath;
         _config.Save();
 
+        UiHelpers.Pause();
+    }
+
+    private async Task InstallGpuAsync(CancellationToken ct)
+    {
+        UiHelpers.Header("Install / update lolMiner");
+
+        var nodes = UiHelpers.SelectNodes(_config, "Install on which nodes?");
+        if (nodes.Count == 0) return;
+
+        var defaultPath = nodes.Select(n => n.GpuMinerPath).FirstOrDefault(q => !string.IsNullOrWhiteSpace(q))
+                          ?? (OperatingSystem.IsWindows() ? @"C:\mining\lolMiner" : "/opt/lolMiner");
+
+        var targetPath = AnsiConsole.Prompt(UiHelpers.Text("Install directory on the nodes:").DefaultValue(defaultPath));
+        var version = AnsiConsole.Prompt(UiHelpers.Text("Release tag (or 'latest'):").DefaultValue("latest"));
+        var restart = AnsiConsole.Confirm("Restart the GPU miner afterwards if it was running?", defaultValue: true);
+
+        AnsiConsole.MarkupLine("[grey]Each node downloads lolMiner itself from GitHub, so it needs outbound internet.[/]");
+        if (!AnsiConsole.Confirm($"Install to [bold]{UiHelpers.Escape(targetPath)}[/] on {nodes.Count} node(s)?", defaultValue: true))
+            return;
+
+        var request = new InstallRequestDto
+        {
+            TargetPath = targetPath,
+            Version = version,
+            RestartAfterInstall = restart,
+        };
+
+        var results = new List<(string Node, InstallResultDto? Result, string? Error)>();
+        await AnsiConsole.Progress()
+            .Columns(new TaskDescriptionColumn(), new SpinnerColumn(), new ElapsedTimeColumn())
+            .StartAsync(async progress =>
+            {
+                var tasks = nodes.Select(async node =>
+                {
+                    var task = progress.AddTask(UiHelpers.Escape(node.Name), maxValue: 1);
+                    using var client = _fleet.CreateClient(node, TimeSpan.FromMinutes(6));
+                    try
+                    {
+                        var result = await client.InstallGpuAsync(request, ct);
+                        lock (results) results.Add((node.Name, result, null));
+                    }
+                    catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException)
+                    {
+                        lock (results) results.Add((node.Name, null, ex.Message));
+                    }
+                    finally
+                    {
+                        task.Increment(1);
+                        task.StopTask();
+                    }
+                });
+                await Task.WhenAll(tasks);
+            });
+
+        AnsiConsole.WriteLine();
+        foreach (var (name, result, error) in results.OrderBy(r => r.Node, StringComparer.OrdinalIgnoreCase))
+        {
+            if (error is not null) { UiHelpers.Result(false, $"{name}: {error}"); continue; }
+            UiHelpers.Result(result != null && result.Ok, $"{name}: {result?.Message ?? "no response"}");
+        }
+
+        foreach (var node in nodes) node.GpuMinerPath = targetPath;
+        _config.Save();
+
+        UiHelpers.Pause();
+    }
+
+    private async Task RemoveMinerAsync(CancellationToken ct)
+    {
+        UiHelpers.Header("Remove miner");
+
+        var nodes = UiHelpers.SelectNodes(_config, "Remove from which nodes?");
+        if (nodes.Count == 0) return;
+
+        var which = AnsiConsole.Prompt(UiHelpers.Menu("Which miner", "< back", "xmrig (CPU)", "lolMiner (GPU)", "< back"));
+        if (which == "< back") return;
+        var kind = which.Contains("xmrig") ? MinerKind.Xmrig : MinerKind.LolMiner;
+
+        var previews = new List<(NodeConfig Node, DirListingDto? Listing, string? Error)>();
+        await AnsiConsole.Status().StartAsync("Reading directories...", async _ =>
+        {
+            var tasks = nodes.Select(async node =>
+            {
+                var path = kind == MinerKind.Xmrig ? node.MinerPath : node.GpuMinerPath;
+                if (string.IsNullOrWhiteSpace(path))
+                {
+                    try
+                    {
+                        using var c = _fleet.CreateClient(node, TimeSpan.FromSeconds(8));
+                        var inv = await c.GetMinersAsync(ct);
+                        var item = inv?.FirstOrDefault(i => i.Kind == kind);
+                        path = item?.ExecutablePath ?? item?.ConfiguredPath ?? path;
+                        if (!string.IsNullOrWhiteSpace(path) && File.Exists(path)) path = Path.GetDirectoryName(path);
+                    }
+                    catch { }
+                }
+                if (string.IsNullOrWhiteSpace(path))
+                {
+                    lock (previews) previews.Add((node, null, "no path configured for this miner"));
+                    return;
+                }
+                try
+                {
+                    using var client = _fleet.CreateClient(node, TimeSpan.FromSeconds(8));
+                    var listing = await client.GetDirAsync(path!, ct);
+                    lock (previews) previews.Add((node, listing, null));
+                }
+                catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException)
+                {
+                    lock (previews) previews.Add((node, null, ex.Message));
+                }
+            });
+            await Task.WhenAll(tasks);
+        });
+
+        foreach (var (node, listing, error) in previews.OrderBy(r => r.Node.Name, StringComparer.OrdinalIgnoreCase))
+        {
+            AnsiConsole.MarkupLine($"[bold]{UiHelpers.Escape(node.Name)}[/]: {UiHelpers.Escape(listing?.Path ?? "—")} {(error is not null ? $"[red]{UiHelpers.Escape(error)}[/]" : "")}");
+            if (listing is null) continue;
+            if (listing.Error is not null) { AnsiConsole.MarkupLine($"  [red]{UiHelpers.Escape(listing.Error)}[/]"); continue; }
+            if (!listing.Exists) { AnsiConsole.MarkupLine("  [yellow]does not exist[/]"); continue; }
+            if (!listing.IsDirectory)
+            {
+                AnsiConsole.MarkupLine($"  [grey]file[/] {UiHelpers.Escape(listing.Entries.FirstOrDefault()?.Name ?? "")} {listing.TotalSize} bytes");
+                continue;
+            }
+            var table = new Table().AddColumn("Name").AddColumn("Type").AddColumn("Size");
+            foreach (var e in listing.Entries.Take(30))
+                table.AddRow(UiHelpers.Escape(e.Name), e.IsDirectory ? "[blue]dir[/]" : "file", e.IsDirectory ? "-" : $"{e.Size} bytes");
+            if (listing.Entries.Count > 30)
+                table.AddRow($"[grey]... and {listing.Entries.Count - 30} more[/]", "", "");
+            AnsiConsole.Write(table);
+            AnsiConsole.MarkupLine($"[grey]Total files size: {listing.TotalSize} bytes, entries: {listing.Entries.Count}[/]");
+        }
+
+        AnsiConsole.WriteLine();
+        if (!AnsiConsole.Confirm($"Delete [bold]{which}[/] on {nodes.Count} node(s) at the paths above?", defaultValue: false))
+            return;
+
+        var results = new List<(string Node, UninstallResultDto? Result, string? Error)>();
+        await AnsiConsole.Progress()
+            .Columns(new TaskDescriptionColumn(), new SpinnerColumn(), new ElapsedTimeColumn())
+            .StartAsync(async progress =>
+            {
+                var tasks = nodes.Select(async node =>
+                {
+                    var task = progress.AddTask(UiHelpers.Escape(node.Name), maxValue: 1);
+                    var path = kind == MinerKind.Xmrig ? node.MinerPath : node.GpuMinerPath;
+                    if (string.IsNullOrWhiteSpace(path))
+                    {
+                        try
+                        {
+                            using var cc = _fleet.CreateClient(node, TimeSpan.FromSeconds(8));
+                            var inv = await cc.GetMinersAsync(ct);
+                            var item = inv?.FirstOrDefault(i => i.Kind == kind);
+                            path = item?.ExecutablePath ?? item?.ConfiguredPath;
+                            if (!string.IsNullOrWhiteSpace(path) && File.Exists(path)) path = Path.GetDirectoryName(path);
+                        }
+                        catch { }
+                    }
+                    if (string.IsNullOrWhiteSpace(path))
+                    {
+                        lock (results) results.Add((node.Name, null, "no path configured"));
+                        task.Increment(1); task.StopTask(); return;
+                    }
+                    try
+                    {
+                        using var client = _fleet.CreateClient(node, TimeSpan.FromMinutes(2));
+                        var r = await client.UninstallAsync(new UninstallRequestDto { Kind = kind, TargetPath = path! }, ct);
+                        lock (results) results.Add((node.Name, r, null));
+                        if (r != null && r.Ok)
+                        {
+                            if (kind == MinerKind.Xmrig) node.MinerPath = null;
+                            else node.GpuMinerPath = null;
+                        }
+                    }
+                    catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException)
+                    {
+                        lock (results) results.Add((node.Name, null, ex.Message));
+                    }
+                    finally { task.Increment(1); task.StopTask(); }
+                });
+                await Task.WhenAll(tasks);
+            });
+
+        AnsiConsole.WriteLine();
+        foreach (var (name, result, error) in results.OrderBy(r => r.Node, StringComparer.OrdinalIgnoreCase))
+        {
+            if (error is not null) { UiHelpers.Result(false, $"{name}: {error}"); continue; }
+            UiHelpers.Result(result != null && result.Ok, $"{name}: {result?.Message ?? "no response"}");
+        }
+        _config.Save();
         UiHelpers.Pause();
     }
 

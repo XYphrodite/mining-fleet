@@ -103,6 +103,44 @@ public sealed class AgentClient : IDisposable
         return await response.Content.ReadFromJsonAsync<InstallResultDto>(JsonOptions, ct);
     }
 
+    public async Task<InstallResultDto?> InstallGpuAsync(InstallRequestDto request, CancellationToken ct)
+    {
+        using var http = LongRunning();
+        using var message = new HttpRequestMessage(HttpMethod.Post, "gpu/install")
+        {
+            Content = JsonContent.Create(request, options: JsonOptions),
+        };
+        using var response = await http.SendAsync(message, ct);
+        return await response.Content.ReadFromJsonAsync<InstallResultDto>(JsonOptions, ct);
+    }
+
+    public async Task<IReadOnlyList<MinerInventoryItemDto>?> GetMinersAsync(CancellationToken ct)
+    {
+        using var response = await _http.GetAsync("miners", ct);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return null;
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<IReadOnlyList<MinerInventoryItemDto>>(JsonOptions, ct);
+    }
+
+    public async Task<DirListingDto?> GetDirAsync(string path, CancellationToken ct)
+    {
+        using var response = await _http.GetAsync($"dir?path={Uri.EscapeDataString(path)}", ct);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return null;
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<DirListingDto>(JsonOptions, ct);
+    }
+
+    public async Task<UninstallResultDto?> UninstallAsync(UninstallRequestDto request, CancellationToken ct)
+    {
+        using var http = LongRunning();
+        using var message = new HttpRequestMessage(HttpMethod.Post, "uninstall")
+        {
+            Content = JsonContent.Create(request, options: JsonOptions),
+        };
+        using var response = await http.SendAsync(message, ct);
+        return await response.Content.ReadFromJsonAsync<UninstallResultDto>(JsonOptions, ct);
+    }
+
     /// <summary>
     /// A client for calls that take minutes rather than seconds.
     ///

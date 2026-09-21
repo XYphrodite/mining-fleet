@@ -37,6 +37,8 @@ builder.Services.AddSingleton(new MinerConfigStore(basePath));
 builder.Services.AddSingleton<MinerService>();
 builder.Services.AddSingleton<HardwareService>();
 builder.Services.AddSingleton<InstallerService>();
+builder.Services.AddSingleton<GpuInstallerService>();
+builder.Services.AddSingleton<MinerInventoryService>();
 builder.Services.AddSingleton<AgentUpdateService>();
 builder.Services.AddSingleton<SessionMonitorService>();
 builder.Services.AddSingleton<MinerCpuLimit>();
@@ -145,6 +147,16 @@ api.MapPut("/config", (MinerConfigDto patch, MinerConfigStore store, SessionMoni
 
 api.MapPost("/install", (InstallRequestDto request, InstallerService installer, CancellationToken ct) =>
     installer.InstallAsync(request, ct));
+
+api.MapPost("/gpu/install", (InstallRequestDto request, GpuInstallerService installer, CancellationToken ct) =>
+    installer.InstallAsync(request, ct));
+
+api.MapGet("/miners", (MinerInventoryService inv) => inv.List());
+
+api.MapGet("/dir", (string path, MinerInventoryService inv) => inv.ListDir(path));
+
+api.MapPost("/uninstall", (UninstallRequestDto request, MinerInventoryService inv, CancellationToken ct) =>
+    inv.UninstallAsync(request, ct));
 
 api.MapGet("/logs", (MinerService miner) => new LogTailDto("xmrig", miner.RecentOutput));
 

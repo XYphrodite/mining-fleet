@@ -132,6 +132,27 @@ public sealed class MinerConfigStore
         }
     }
 
+    public MinerConfigDto ClearXmrigPath()
+    {
+        lock (_gate)
+        {
+            _current = _current with { ExecutablePath = null };
+            Save(_current);
+            return _current;
+        }
+    }
+
+    public MinerConfigDto ClearGpuMinerPath()
+    {
+        lock (_gate)
+        {
+            if (_current.GpuMiner is not null)
+                _current = _current with { GpuMiner = _current.GpuMiner with { ExecutablePath = null } };
+            Save(_current);
+            return _current;
+        }
+    }
+
     /// <summary>
     /// Whether the agent should put the miner to work the moment it starts.
     ///

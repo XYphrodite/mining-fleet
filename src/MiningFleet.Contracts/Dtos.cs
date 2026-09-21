@@ -507,6 +507,44 @@ public sealed record InstallRequestDto
 
 public sealed record InstallResultDto(bool Ok, string Message, string? InstalledVersion, string? ExecutablePath);
 
+/// <summary>Which miner is being managed.</summary>
+public enum MinerKind
+{
+    Xmrig = 0,
+    LolMiner = 1,
+}
+
+public sealed record DirEntryDto(string Name, bool IsDirectory, long Size, DateTimeOffset? Modified);
+
+public sealed record DirListingDto
+{
+    public string Path { get; init; } = "";
+    public bool Exists { get; init; }
+    public bool IsDirectory { get; init; }
+    public IReadOnlyList<DirEntryDto> Entries { get; init; } = [];
+    public long TotalSize { get; init; }
+    public string? Error { get; init; }
+}
+
+public sealed record MinerInventoryItemDto
+{
+    public MinerKind Kind { get; init; }
+    public string Name { get; init; } = "";
+    public bool Installed { get; init; }
+    public string? ExecutablePath { get; init; }
+    public string? ConfiguredPath { get; init; }
+    public string? Version { get; init; }
+    public long? SizeBytes { get; init; }
+}
+
+public sealed record UninstallRequestDto
+{
+    public MinerKind Kind { get; init; }
+    public string TargetPath { get; init; } = "";
+}
+
+public sealed record UninstallResultDto(bool Ok, string Message);
+
 /// <summary>Update the agent itself from a published mining-fleet release.</summary>
 public sealed record AgentUpdateRequestDto
 {
