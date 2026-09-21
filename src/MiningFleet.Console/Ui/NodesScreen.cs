@@ -27,6 +27,7 @@ public sealed class NodesScreen
                     "Add manually",
                     "Edit node",
                     "Test connection",
+                    "Update agents",
                     "Enable / disable",
                     "Remove node",
                     "< back"));
@@ -37,6 +38,7 @@ public sealed class NodesScreen
                 case "Add manually": AddManually(); break;
                 case "Edit node": await EditAsync(ct); break;
                 case "Test connection": await TestAsync(ct); break;
+                case "Update agents": await UpdateAgentsAsync(ct); break;
                 case "Enable / disable": ToggleEnabled(); break;
                 case "Remove node": Remove(); break;
                 default: return;
@@ -266,6 +268,71 @@ public sealed class NodesScreen
         _config.Save();
         UiHelpers.Result(true, $"Removed {node.Name}. The agent on that machine is untouched.");
         UiHelpers.Pause();
+    }
+
+    private async Task UpdateAgentsAsync(CancellationToken ct)
+    {
+        UiHelpers.Header("Update agents");
+        var nodes = UiHelpers.SelectNodes(_config, "Update which nodes?");
+        if (nodes.Count == 0) return;
+        var ver = AnsiConsole.Prompt(UiHelpers.Text("Release tag (latest / v1.17.11):").DefaultValue("latest"));
+        if (string.IsNullOrWhiteSpace(ver)) ver = "latest";
+        var force = AnsiConsole.Confirm("Force reinstall even if same version?", defaultValue: false);
+        AnsiConsole.MarkupLine($"[grey]Updating {nodes.Count} node(s) to {UiHelpers.Escape(ver)}...[/]");
+        AnsiConsole.WriteLine();
+        var failures = 0;
+        foreach (var node in nodes.OrderBy(n => n.Name, StringComparer.OrdinalIgnoreCase))
+        {
+            using var client = _fleet.CreateClient(node);
+            AgentInfoDto? before;
+            try { before = await client.GetInfoAsync(ct); }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+            {
+                UiHelpers.Result(false, $"{node.Name}: unreachable, skipped ({ex.Message})");
+                failures++; continue;
+            }
+            AnsiConsole.MarkupLine($"[grey]{UiHelpers.Escape(node.Name)}[/] agent {UiHelpers.Escape(before?.AgentVersion ?? "?")} -> updating...");
+            try
+            {
+                var res = await client.UpdateAgentAsync(new AgentUpdateRequestDto { Version = ver == "latest" ? null : ver, Force = force }, ct);
+                if (res is null) { UiHelpers.Result(false, $"{node.Name}: no result"); failures++; continue; }
+                UiHelpers.Result(res.Ok, $"{node.Name}: {res.Message}");
+                if (!res.Ok) { failures++; continue; }
+                if (!res.Restarting) continue;
+                var after = await WaitForAgentAsync(node, before, ct);
+                if (after is not null) AnsiConsole.MarkupLine($"  [green]back up[/] on {UiHelpers.Escape(after.AgentVersion)}");
+                else { AnsiConsole.MarkupLine("  [yellow]did not come back within 120s[/]"); failures++; }
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException)
+            {
+                AnsiConsole.MarkupLine("  [grey]connection closed during swap, waiting...[/]");
+                var after = await WaitForAgentAsync(node, before, ct);
+                if (after is not null) AnsiConsole.MarkupLine($"  [green]back up[/] on {UiHelpers.Escape(after.AgentVersion)}");
+                else { UiHelpers.Result(false, $"{node.Name}: did not come back ({ex.Message})"); failures++; }
+            }
+        }
+        AnsiConsole.WriteLine();
+        AnsiConsole.MarkupLine(failures == 0 ? "[green]All agents updated.[/]" : $"[yellow]{failures} node(s) need attention.[/]");
+        UiHelpers.Pause();
+    }
+
+    private async Task<AgentInfoDto?> WaitForAgentAsync(NodeConfig node, AgentInfoDto? before, CancellationToken ct)
+    {
+        var started = DateTime.UtcNow;
+        while (DateTime.UtcNow - started < TimeSpan.FromSeconds(120))
+        {
+            await Task.Delay(TimeSpan.FromSeconds(3), ct);
+            try
+            {
+                using var c = _fleet.CreateClient(node, TimeSpan.FromSeconds(5));
+                if (await c.GetInfoAsync(ct) is not { } info) continue;
+                var younger = info.AgentUptimeSeconds < (DateTime.UtcNow - started).TotalSeconds + 5;
+                var moved = before is not null && info.AgentVersion != before.AgentVersion;
+                if (younger || moved) return info;
+            }
+            catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException) { }
+        }
+        return null;
     }
 
     private static string? NullIfBlank(string value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
