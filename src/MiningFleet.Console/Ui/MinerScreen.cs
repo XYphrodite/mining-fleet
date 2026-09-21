@@ -22,32 +22,42 @@ public sealed class MinerScreen
             UiHelpers.Header("Miner control");
 
             var choice = AnsiConsole.Prompt(UiHelpers.Menu("Action", "< back",
-                    "Start mining",
-                    "Stop mining",
-                    "Restart mining",
-                    "Install / update xmrig (CPU)",
-                    "Install / update lolMiner (GPU)",
+                    "[CPU] Start mining",
+                    "[CPU] Stop mining",
+                    "[CPU] Restart mining",
+                    "[CPU] Install / update xmrig",
+                    "[GPU] Install / update lolMiner",
+                    "[GPU] Configure fleet defaults",
+                    "[GPU] Configure nodes",
+                    "[GPU] Start mining",
+                    "[GPU] Stop mining",
                     "Remove miner",
                     "Push pool settings to nodes",
                     "Start mining when the node boots",
                     "Session monitor (hashrate workaround)",
                     "Power limit while the PC is in use",
                     "View miner log",
+                    "[GPU] View GPU log",
                     "< back"));
 
             switch (choice)
             {
-                case "Start mining": await RunAsync("Starting", (c, t) => c.StartAsync(t), ct); break;
-                case "Stop mining": await RunAsync("Stopping", (c, t) => c.StopAsync(t), ct); break;
-                case "Restart mining": await RunAsync("Restarting", (c, t) => c.RestartAsync(t), ct); break;
-                case "Install / update xmrig (CPU)": await InstallAsync(ct); break;
-                case "Install / update lolMiner (GPU)": await InstallGpuAsync(ct); break;
+                case "[CPU] Start mining": await RunAsync("Starting", (c, t) => c.StartAsync(t), ct); break;
+                case "[CPU] Stop mining": await RunAsync("Stopping", (c, t) => c.StopAsync(t), ct); break;
+                case "[CPU] Restart mining": await RunAsync("Restarting", (c, t) => c.RestartAsync(t), ct); break;
+                case "[CPU] Install / update xmrig": await InstallAsync(ct); break;
+                case "[GPU] Install / update lolMiner": await InstallGpuAsync(ct); break;
+                case "[GPU] Configure fleet defaults": await ConfigureFleetGpuAsync(ct); break;
+                case "[GPU] Configure nodes": await ConfigureNodesGpuAsync(ct); break;
+                case "[GPU] Start mining": await RunGpuAsync(true, ct); break;
+                case "[GPU] Stop mining": await RunGpuAsync(false, ct); break;
                 case "Remove miner": await RemoveMinerAsync(ct); break;
                 case "Push pool settings to nodes": await PushAsync(ct); break;
                 case "Start mining when the node boots": await AutoStartAsync(ct); break;
                 case "Session monitor (hashrate workaround)": await SessionMonitorAsync(ct); break;
                 case "Power limit while the PC is in use": await ThrottleAsync(ct); break;
                 case "View miner log": await LogsAsync(ct); break;
+                case "[GPU] View GPU log": await LogsGpuAsync(ct); break;
                 default: return;
             }
         }
@@ -620,6 +630,92 @@ public sealed class MinerScreen
     {
         node.Throttle ??= new ThrottleConfig();
         node.Throttle.Enabled = enabled;
+    }
+
+    private async Task ConfigureFleetGpuAsync(CancellationToken ct)
+    {
+        UiHelpers.Header("Fleet GPU defaults");
+        var cur = _config.GpuMiner;
+        AnsiConsole.MarkupLine($"[grey]Current: {(cur.Enabled == true ? cur.Algorithm : "off")} on {UiHelpers.Escape(cur.PoolUrl ?? "-")} as {UiHelpers.Escape(cur.User ?? "-")}[/]");
+        var enabled = AnsiConsole.Confirm("Enable GPU mining by default?", cur.Enabled == true);
+        var algo = AnsiConsole.Prompt(UiHelpers.Text("Algorithm (CR29, NEXA, blank = leave):").AllowEmpty().DefaultValue(cur.Algorithm ?? ""));
+        var pool = AnsiConsole.Prompt(UiHelpers.Text("Pool host:port (blank = leave):").AllowEmpty().DefaultValue(cur.PoolUrl ?? ""));
+        var user = AnsiConsole.Prompt(UiHelpers.Text("Pool user (address/worker, blank = leave):").AllowEmpty().DefaultValue(cur.User ?? ""));
+        _config.GpuMiner.Enabled = enabled;
+        if (!string.IsNullOrWhiteSpace(algo)) _config.GpuMiner.Algorithm = algo.Trim();
+        if (!string.IsNullOrWhiteSpace(pool)) _config.GpuMiner.PoolUrl = pool.Trim();
+        if (!string.IsNullOrWhiteSpace(user)) _config.GpuMiner.User = user.Trim();
+        _config.Save();
+        var enabledNodes = _config.Nodes.Where(n => n.Enabled).ToList();
+        if (enabledNodes.Count == 0) { AnsiConsole.MarkupLine("[yellow]No enabled nodes to push to.[/]"); UiHelpers.Pause(); return; }
+        var results = await _fleet.PushGpuMinerAsync(enabledNodes, ct);
+        foreach (var (node, res) in results.OrderBy(r => r.Node.Name, StringComparer.OrdinalIgnoreCase))
+            UiHelpers.Result(res.Ok, $"{node.Name}: {res.Message}");
+        UiHelpers.Pause();
+    }
+
+    private async Task ConfigureNodesGpuAsync(CancellationToken ct)
+    {
+        var nodes = UiHelpers.SelectNodes(_config, "Configure which nodes?");
+        if (nodes.Count == 0) return;
+        UiHelpers.Header($"GPU for {nodes.Count} node(s)");
+        var hint = _config.GpuMinerFor(nodes[0]);
+        AnsiConsole.MarkupLine($"[grey]Current fleet: {(hint.Enabled == true ? hint.Algorithm : "off")} on {hint.PoolUrl ?? "-"} as {UiHelpers.Escape(hint.User ?? "-")}[/]");
+        AnsiConsole.WriteLine();
+        var enabledChoice = AnsiConsole.Prompt(UiHelpers.Menu("Enabled", "< back", "on", "off", "inherit fleet", "< back"));
+        if (enabledChoice == "< back") return;
+        bool? enabled = enabledChoice == "on" ? true : enabledChoice == "off" ? false : null;
+        var algo = AnsiConsole.Prompt(UiHelpers.Text("Algorithm (CR29/NEXA, blank = inherit):").AllowEmpty().DefaultValue(""));
+        var pool = AnsiConsole.Prompt(UiHelpers.Text("Pool host:port (blank = inherit):").AllowEmpty().DefaultValue(""));
+        var user = AnsiConsole.Prompt(UiHelpers.Text("Pool user (blank = inherit):").AllowEmpty().DefaultValue(""));
+        foreach (var n in nodes)
+        {
+            n.GpuMiner ??= new GpuMinerConfig();
+            if (enabled is not null) n.GpuMiner.Enabled = enabled;
+            else if (enabledChoice == "inherit fleet") n.GpuMiner.Enabled = null;
+            if (!string.IsNullOrWhiteSpace(algo)) n.GpuMiner.Algorithm = algo.Trim();
+            if (!string.IsNullOrWhiteSpace(pool)) n.GpuMiner.PoolUrl = pool.Trim();
+            if (!string.IsNullOrWhiteSpace(user)) n.GpuMiner.User = user.Trim();
+        }
+        _config.Save();
+        var results = await _fleet.PushGpuMinerAsync(nodes, ct);
+        foreach (var (node, res) in results.OrderBy(r => r.Node.Name, StringComparer.OrdinalIgnoreCase))
+            UiHelpers.Result(res.Ok, $"{node.Name}: {res.Message}");
+        UiHelpers.Pause();
+    }
+
+    private async Task RunGpuAsync(bool start, CancellationToken ct)
+    {
+        var nodes = UiHelpers.SelectNodes(_config, $"{(start ? "Start" : "Stop")} GPU on which nodes?");
+        if (nodes.Count == 0) return;
+        var verb = start ? "Starting" : "Stopping";
+        IReadOnlyList<(NodeConfig Node, CommandResultDto Result)> results = [];
+        await AnsiConsole.Status().StartAsync($"{verb} GPU on {nodes.Count} node(s)...", async _ =>
+        {
+            results = await _fleet.ForEachAsync(nodes, (c, t) => start ? c.GpuStartAsync(t) : c.GpuStopAsync(t), ct);
+        });
+        foreach (var (node, res) in results.OrderBy(r => r.Node.Name, StringComparer.OrdinalIgnoreCase))
+            UiHelpers.Result(res.Ok, $"{node.Name}: {res.Message}");
+        UiHelpers.Pause();
+    }
+
+    private async Task LogsGpuAsync(CancellationToken ct)
+    {
+        var node = UiHelpers.SelectNode(_config, "GPU log from which node?");
+        if (node is null) return;
+        UiHelpers.Header($"{node.Name} - lolMiner output");
+        using var client = _fleet.CreateClient(node, TimeSpan.FromSeconds(15));
+        try
+        {
+            var logs = await client.GetGpuLogsAsync(ct);
+            if (logs is null || logs.Lines.Count == 0) AnsiConsole.MarkupLine("[grey]No output captured.[/]");
+            else foreach (var line in logs.Lines.TakeLast(40)) AnsiConsole.MarkupLine($"[grey]{UiHelpers.Escape(line)}[/]");
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException)
+        {
+            UiHelpers.Result(false, ex.Message);
+        }
+        UiHelpers.Pause();
     }
 
     private async Task LogsAsync(CancellationToken ct)

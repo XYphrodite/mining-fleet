@@ -52,7 +52,6 @@ var hardware = new HardwareScreen(config, fleet);
 var economics = new EconomicsScreen(config, fleet, market);
 var pool = new PoolScreen(config, market);
 var settings = new SettingsScreen(config);
-var gpu = new GpuScreen(config, fleet);
 
 var consoleVersion = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "0.0.0";
 
@@ -76,7 +75,6 @@ try
         var choice = AnsiConsole.Prompt(UiHelpers.Menu("Main menu", "Exit",
                 "Dashboard (live)",
                 "Miner control",
-                "GPU mining",
                 "Nodes",
                 "Update agents",
                 "Hardware & sensors",
@@ -90,7 +88,6 @@ try
         {
             case "Dashboard (live)": await dashboard.ShowAsync(cts.Token); break;
             case "Miner control": await miner.ShowAsync(cts.Token); break;
-            case "GPU mining": await gpu.ShowAsync(cts.Token); break;
             case "Nodes": await nodes.ShowAsync(cts.Token); break;
             case "Update agents": await UpdateAgentsFromPanelAsync(config, fleet, cts.Token); break;
             case "Hardware & sensors": await hardware.ShowAsync(cts.Token); break;
