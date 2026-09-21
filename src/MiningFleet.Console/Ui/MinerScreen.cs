@@ -637,10 +637,26 @@ public sealed class MinerScreen
         UiHelpers.Header("Fleet GPU defaults");
         var cur = _config.GpuMiner;
         AnsiConsole.MarkupLine($"[grey]Current: {(cur.Enabled == true ? cur.Algorithm : "off")} on {UiHelpers.Escape(cur.PoolUrl ?? "-")} as {UiHelpers.Escape(cur.User ?? "-")}[/]");
+        if (cur.Enabled != true) AnsiConsole.MarkupLine("[yellow]Fleet is off — blank leaves pool/user empty and nodes will still show 'no algorithm on no pool'. Type values now.[/]");
         var enabled = AnsiConsole.Confirm("Enable GPU mining by default?", cur.Enabled == true);
-        var algo = AnsiConsole.Prompt(UiHelpers.Text("Algorithm (CR29, NEXA, blank = leave):").AllowEmpty().DefaultValue(cur.Algorithm ?? ""));
-        var pool = AnsiConsole.Prompt(UiHelpers.Text("Pool host:port (blank = leave):").AllowEmpty().DefaultValue(cur.PoolUrl ?? ""));
-        var user = AnsiConsole.Prompt(UiHelpers.Text("Pool user (address/worker, blank = leave):").AllowEmpty().DefaultValue(cur.User ?? ""));
+        var algo = AnsiConsole.Prompt(UiHelpers.Text("Algorithm (CR29, NEXA, blank = keep):").AllowEmpty().DefaultValue(cur.Algorithm ?? ""));
+        var pool = AnsiConsole.Prompt(UiHelpers.Text("Pool host:port (blank = keep):").AllowEmpty().DefaultValue(cur.PoolUrl ?? ""));
+        var user = AnsiConsole.Prompt(UiHelpers.Text("Pool user (address/worker, blank = keep):").AllowEmpty().DefaultValue(cur.User ?? ""));
+        if (enabled && string.IsNullOrWhiteSpace(algo) && string.IsNullOrWhiteSpace(cur.Algorithm))
+        {
+            UiHelpers.Result(false, "Enabled but no algorithm — type CR29 (3060 12GB) or NEXA (4GB). Not saved.");
+            UiHelpers.Pause(); return;
+        }
+        if (enabled && string.IsNullOrWhiteSpace(pool) && string.IsNullOrWhiteSpace(cur.PoolUrl ?? ""))
+        {
+            UiHelpers.Result(false, "Enabled but no pool — type host:port (e.g. pool.kryptex.com:7777). Not saved.");
+            UiHelpers.Pause(); return;
+        }
+        if (enabled && string.IsNullOrWhiteSpace(user) && string.IsNullOrWhiteSpace(cur.User ?? ""))
+        {
+            UiHelpers.Result(false, "Enabled but no user — type address/worker. Not saved.");
+            UiHelpers.Pause(); return;
+        }
         _config.GpuMiner.Enabled = enabled;
         if (!string.IsNullOrWhiteSpace(algo)) _config.GpuMiner.Algorithm = algo.Trim();
         if (!string.IsNullOrWhiteSpace(pool)) _config.GpuMiner.PoolUrl = pool.Trim();
@@ -653,6 +669,8 @@ public sealed class MinerScreen
             UiHelpers.Result(res.Ok, $"{node.Name}: {res.Message}");
         UiHelpers.Pause();
     }
+
+
 
     private async Task ConfigureNodesGpuAsync(CancellationToken ct)
     {
@@ -668,6 +686,13 @@ public sealed class MinerScreen
         var algo = AnsiConsole.Prompt(UiHelpers.Text("Algorithm (CR29/NEXA, blank = inherit):").AllowEmpty().DefaultValue(""));
         var pool = AnsiConsole.Prompt(UiHelpers.Text("Pool host:port (blank = inherit):").AllowEmpty().DefaultValue(""));
         var user = AnsiConsole.Prompt(UiHelpers.Text("Pool user (blank = inherit):").AllowEmpty().DefaultValue(""));
+        // Snapshot to allow revert when validation fails
+        var snapshot = nodes.ToDictionary(n => n.Name, n => n.GpuMiner is null ? null : new GpuMinerConfig
+        {
+            Enabled = n.GpuMiner.Enabled, Algorithm = n.GpuMiner.Algorithm, PoolUrl = n.GpuMiner.PoolUrl, User = n.GpuMiner.User,
+            Password = n.GpuMiner.Password, ApiPort = n.GpuMiner.ApiPort, RunInInteractiveSession = n.GpuMiner.RunInInteractiveSession,
+            PauseWhile = n.GpuMiner.PauseWhile is null ? null : new GpuPauseConfig{ TcpPort = n.GpuMiner.PauseWhile.TcpPort, ProcessName = n.GpuMiner.PauseWhile.ProcessName, ProcessNames = n.GpuMiner.PauseWhile.ProcessNames?.ToList(), QuietSeconds = n.GpuMiner.PauseWhile.QuietSeconds }
+        });
         foreach (var n in nodes)
         {
             n.GpuMiner ??= new GpuMinerConfig();
@@ -676,6 +701,21 @@ public sealed class MinerScreen
             if (!string.IsNullOrWhiteSpace(algo)) n.GpuMiner.Algorithm = algo.Trim();
             if (!string.IsNullOrWhiteSpace(pool)) n.GpuMiner.PoolUrl = pool.Trim();
             if (!string.IsNullOrWhiteSpace(user)) n.GpuMiner.User = user.Trim();
+        }
+        var missing = nodes.Where(n =>
+        {
+            var g = _config.GpuMinerFor(n);
+            return g.Enabled == true && (string.IsNullOrWhiteSpace(g.Algorithm) || string.IsNullOrWhiteSpace(g.PoolUrl) || string.IsNullOrWhiteSpace(g.User));
+        }).ToList();
+        if (missing.Count > 0)
+        {
+            AnsiConsole.MarkupLine($"[red]Enabled but still missing algorithm/pool/user on {UiHelpers.Escape(string.Join(", ", missing.Select(m => m.Name)))}[/]");
+            AnsiConsole.MarkupLine("[yellow]Type CR29/NEXA, host:port and address/worker — blank = inherit from fleet which is currently empty. Not saved.[/]");
+            foreach (var n in nodes)
+            {
+                if (snapshot.TryGetValue(n.Name, out var prev)) n.GpuMiner = prev;
+            }
+            UiHelpers.Pause(); return;
         }
         _config.Save();
         var results = await _fleet.PushGpuMinerAsync(nodes, ct);
