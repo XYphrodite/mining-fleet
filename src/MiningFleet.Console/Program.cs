@@ -60,7 +60,7 @@ try
     while (!cts.IsCancellationRequested)
     {
         AnsiConsole.Clear();
-        AnsiConsole.Write(new FigletText("xmrig fleet").Color(Color.Aqua));
+        AnsiConsole.Write(new FigletText("mining fleet").Color(Color.Aqua));
         AnsiConsole.MarkupLine(
             $"[grey]{config.Nodes.Count(n => n.Enabled)} enabled node(s)  |  pool {Markup.Escape(config.Pool.Url)}  |  {Markup.Escape(config.Path)}[/]");
         if (string.IsNullOrWhiteSpace(config.Token))
@@ -96,6 +96,10 @@ try
 catch (OperationCanceledException)
 {
     // Ctrl+C on a screen that was waiting on the network.
+}
+finally
+{
+    AnsiConsole.Clear();
 }
 
 return 0;
