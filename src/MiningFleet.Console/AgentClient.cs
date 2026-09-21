@@ -100,7 +100,21 @@ public sealed class AgentClient : IDisposable
             Content = JsonContent.Create(request, options: JsonOptions),
         };
         using var response = await http.SendAsync(message, ct);
-        return await response.Content.ReadFromJsonAsync<InstallResultDto>(JsonOptions, ct);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            return new InstallResultDto(false, "this agent is too old to install xmrig; run mining-fleet upgrade-agents", null, null);
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync(ct);
+            return new InstallResultDto(false, string.IsNullOrWhiteSpace(body) ? $"the agent returned HTTP {(int)response.StatusCode}" : body, null, null);
+        }
+        try
+        {
+            return await response.Content.ReadFromJsonAsync<InstallResultDto>(JsonOptions, ct);
+        }
+        catch (System.Text.Json.JsonException ex)
+        {
+            return new InstallResultDto(false, $"invalid JSON from agent: {ex.Message}", null, null);
+        }
     }
 
     public async Task<InstallResultDto?> InstallGpuAsync(InstallRequestDto request, CancellationToken ct)
