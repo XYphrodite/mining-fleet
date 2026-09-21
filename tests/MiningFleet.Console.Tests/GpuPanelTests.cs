@@ -36,4 +36,28 @@ public sealed class GpuPanelTests
         Assert.Equal("u", dto.User);
         Assert.True(dto.Enabled);
     }
+
+    [Fact]
+    public void Blank_inherits_from_fleet_and_empty_fleet_is_detected()
+    {
+        var cfg = new FleetConfig { Token = "t" };
+        cfg.GpuMiner.Enabled = true;
+        cfg.GpuMiner.Algorithm = "CR29";
+        cfg.GpuMiner.PoolUrl = "p:1234";
+        cfg.GpuMiner.User = "u";
+
+        // Node leaves blank (null) — inherits fleet
+        var node = new NodeConfig { Name = "rig1", Host = "1.1.1.1", GpuMiner = new GpuMinerConfig { Enabled = null } };
+        cfg.Nodes.Add(node);
+        var forNode = cfg.GpuMinerFor(node);
+        Assert.Equal("CR29", forNode.Algorithm); // blank хватается из дефолтного
+
+        // Empty fleet + blank = still missing — panel must detect and not save
+        var emptyFleet = new FleetConfig { Token = "t" };
+        emptyFleet.GpuMiner.Enabled = false;
+        var emptyNode = new NodeConfig { Name = "rig2", Host = "2.2.2.2", GpuMiner = new GpuMinerConfig { Enabled = true } };
+        emptyFleet.Nodes.Add(emptyNode);
+        var forEmpty = emptyFleet.GpuMinerFor(emptyNode);
+        Assert.True(string.IsNullOrWhiteSpace(forEmpty.Algorithm)); // blank не спасает когда флот пустой
+    }
 }

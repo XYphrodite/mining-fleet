@@ -683,9 +683,13 @@ public sealed class MinerScreen
         var enabledChoice = AnsiConsole.Prompt(UiHelpers.Menu("Enabled", "< back", "on", "off", "inherit fleet", "< back"));
         if (enabledChoice == "< back") return;
         bool? enabled = enabledChoice == "on" ? true : enabledChoice == "off" ? false : null;
-        var algo = AnsiConsole.Prompt(UiHelpers.Text("Algorithm (CR29/NEXA, blank = inherit):").AllowEmpty().DefaultValue(""));
-        var pool = AnsiConsole.Prompt(UiHelpers.Text("Pool host:port (blank = inherit):").AllowEmpty().DefaultValue(""));
-        var user = AnsiConsole.Prompt(UiHelpers.Text("Pool user (blank = inherit):").AllowEmpty().DefaultValue(""));
+        // Blank = inherit from fleet — show fleet value as hint so Enter really inherits it
+        var fleetAlgo = _config.GpuMiner.Algorithm ?? hint.Algorithm ?? "";
+        var fleetPool = _config.GpuMiner.PoolUrl ?? hint.PoolUrl ?? "";
+        var fleetUser = _config.GpuMiner.User ?? hint.User ?? "";
+        var algo = AnsiConsole.Prompt(UiHelpers.Text($"Algorithm (CR29/NEXA, blank = inherit '{UiHelpers.Escape(fleetAlgo != "" ? fleetAlgo : "—")}'):").AllowEmpty().DefaultValue(""));
+        var pool = AnsiConsole.Prompt(UiHelpers.Text($"Pool host:port (blank = inherit '{UiHelpers.Escape(fleetPool != "" ? fleetPool : "—")}'):").AllowEmpty().DefaultValue(""));
+        var user = AnsiConsole.Prompt(UiHelpers.Text($"Pool user (blank = inherit '{UiHelpers.Escape(fleetUser != "" ? fleetUser : "—")}'):").AllowEmpty().DefaultValue(""));
         // Snapshot to allow revert when validation fails
         var snapshot = nodes.ToDictionary(n => n.Name, n => n.GpuMiner is null ? null : new GpuMinerConfig
         {
@@ -710,7 +714,7 @@ public sealed class MinerScreen
         if (missing.Count > 0)
         {
             AnsiConsole.MarkupLine($"[red]Enabled but still missing algorithm/pool/user on {UiHelpers.Escape(string.Join(", ", missing.Select(m => m.Name)))}[/]");
-            AnsiConsole.MarkupLine("[yellow]Type CR29/NEXA, host:port and address/worker — blank = inherit from fleet which is currently empty. Not saved.[/]");
+            AnsiConsole.MarkupLine("[yellow]Blank = inherit from fleet — fleet is empty, so set it first: Miner control → GPU: Configure fleet defaults (or type values here instead of Enter). Not saved.[/]");
             foreach (var n in nodes)
             {
                 if (snapshot.TryGetValue(n.Name, out var prev)) n.GpuMiner = prev;
