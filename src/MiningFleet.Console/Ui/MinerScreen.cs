@@ -22,44 +22,121 @@ public sealed class MinerScreen
             UiHelpers.Header("Miner control");
 
             var choice = AnsiConsole.Prompt(UiHelpers.Menu("Action", "< back",
-                    "CPU: Start mining",
-                    "CPU: Stop mining",
-                    "CPU: Restart mining",
-                    "CPU: Install / update xmrig",
-                    "GPU: Install / update lolMiner",
-                    "GPU: Configure fleet defaults",
-                    "GPU: Configure nodes",
-                    "GPU: Start mining",
-                    "GPU: Stop mining",
-                    "Remove miner",
-                    "Push pool settings to nodes",
-                    "Start mining when the node boots",
-                    "Session monitor (hashrate workaround)",
-                    "Power limit while the PC is in use",
-                    "View miner log",
-                    "GPU: View GPU log",
+                    "CPU mining...",
+                    "GPU mining...",
+                    "Install / update...",
+                    "Settings...",
+                    "View logs...",
                     "< back"));
 
             switch (choice)
             {
-                case "CPU: Start mining": await RunAsync("Starting", (c, t) => c.StartAsync(t), ct); break;
-                case "CPU: Stop mining": await RunAsync("Stopping", (c, t) => c.StopAsync(t), ct); break;
-                case "CPU: Restart mining": await RunAsync("Restarting", (c, t) => c.RestartAsync(t), ct); break;
-                case "CPU: Install / update xmrig": await InstallAsync(ct); break;
-                case "GPU: Install / update lolMiner": await InstallGpuAsync(ct); break;
-                case "GPU: Configure fleet defaults": await ConfigureFleetGpuAsync(ct); break;
-                case "GPU: Configure nodes": await ConfigureNodesGpuAsync(ct); break;
-                case "GPU: Start mining": await RunGpuAsync(true, ct); break;
-                case "GPU: Stop mining": await RunGpuAsync(false, ct); break;
-                case "Remove miner": await RemoveMinerAsync(ct); break;
-                case "Push pool settings to nodes": await PushAsync(ct); break;
-                case "Start mining when the node boots": await AutoStartAsync(ct); break;
-                case "Session monitor (hashrate workaround)": await SessionMonitorAsync(ct); break;
-                case "Power limit while the PC is in use": await ThrottleAsync(ct); break;
-                case "View miner log": await LogsAsync(ct); break;
-                case "GPU: View GPU log": await LogsGpuAsync(ct); break;
+                case "CPU mining...": await CpuMenuAsync(ct); break;
+                case "GPU mining...": await GpuMenuAsync(ct); break;
+                case "Install / update...": await InstallMenuAsync(ct); break;
+                case "Settings...": await SettingsMenuAsync(ct); break;
+                case "View logs...": await LogsMenuAsync(ct); break;
                 default: return;
             }
+        }
+    }
+
+    private async Task CpuMenuAsync(CancellationToken ct)
+    {
+        UiHelpers.Header("CPU mining");
+
+        var choice = AnsiConsole.Prompt(UiHelpers.Menu("Action", "< back",
+                "Start mining",
+                "Stop mining",
+                "Restart mining",
+                "< back"));
+
+        switch (choice)
+        {
+            case "Start mining": await RunAsync("Starting", (c, t) => c.StartAsync(t), ct); break;
+            case "Stop mining": await RunAsync("Stopping", (c, t) => c.StopAsync(t), ct); break;
+            case "Restart mining": await RunAsync("Restarting", (c, t) => c.RestartAsync(t), ct); break;
+            default: break;
+        }
+    }
+
+    private async Task GpuMenuAsync(CancellationToken ct)
+    {
+        UiHelpers.Header("GPU mining");
+
+        var choice = AnsiConsole.Prompt(UiHelpers.Menu("Action", "< back",
+                "Start mining",
+                "Stop mining",
+                "Restart mining",
+                "< back"));
+
+        switch (choice)
+        {
+            case "Start mining": await RunGpuAsync("start", (c, t) => c.GpuStartAsync(t), ct); break;
+            case "Stop mining": await RunGpuAsync("stop", (c, t) => c.GpuStopAsync(t), ct); break;
+            case "Restart mining": await RunGpuAsync("restart", (c, t) => c.GpuRestartAsync(t), ct); break;
+            default: break;
+        }
+    }
+
+    private async Task InstallMenuAsync(CancellationToken ct)
+    {
+        UiHelpers.Header("Install / update");
+
+        var choice = AnsiConsole.Prompt(UiHelpers.Menu("Action", "< back",
+                "Install / update xmrig (CPU)",
+                "Install / update lolMiner (GPU)",
+                "Remove miner",
+                "< back"));
+
+        switch (choice)
+        {
+            case "Install / update xmrig (CPU)": await InstallAsync(ct); break;
+            case "Install / update lolMiner (GPU)": await InstallGpuAsync(ct); break;
+            case "Remove miner": await RemoveMinerAsync(ct); break;
+            default: break;
+        }
+    }
+
+    private async Task SettingsMenuAsync(CancellationToken ct)
+    {
+        UiHelpers.Header("Miner settings");
+
+        var choice = AnsiConsole.Prompt(UiHelpers.Menu("Action", "< back",
+                "Push pool settings to nodes",
+                "Start mining when the node boots",
+                "Power limit while the PC is in use",
+                "Session monitor (hashrate workaround)",
+                "GPU: fleet defaults",
+                "GPU: per-node settings",
+                "< back"));
+
+        switch (choice)
+        {
+            case "Push pool settings to nodes": await PushAsync(ct); break;
+            case "Start mining when the node boots": await AutoStartAsync(ct); break;
+            case "Power limit while the PC is in use": await ThrottleAsync(ct); break;
+            case "Session monitor (hashrate workaround)": await SessionMonitorAsync(ct); break;
+            case "GPU: fleet defaults": await ConfigureFleetGpuAsync(ct); break;
+            case "GPU: per-node settings": await ConfigureNodesGpuAsync(ct); break;
+            default: break;
+        }
+    }
+
+    private async Task LogsMenuAsync(CancellationToken ct)
+    {
+        UiHelpers.Header("Miner logs");
+
+        var choice = AnsiConsole.Prompt(UiHelpers.Menu("Log", "< back",
+                "CPU miner log",
+                "GPU miner log",
+                "< back"));
+
+        switch (choice)
+        {
+            case "CPU miner log": await LogsAsync(ct); break;
+            case "GPU miner log": await LogsGpuAsync(ct); break;
+            default: break;
         }
     }
 
@@ -728,15 +805,15 @@ public sealed class MinerScreen
         UiHelpers.Pause();
     }
 
-    private async Task RunGpuAsync(bool start, CancellationToken ct)
+    private async Task RunGpuAsync(string action, Func<AgentClient, CancellationToken, Task<CommandResultDto?>> run, CancellationToken ct)
     {
-        var nodes = UiHelpers.SelectNodes(_config, $"{(start ? "Start" : "Stop")} GPU on which nodes?");
+        var nodes = UiHelpers.SelectNodes(_config, $"{action} GPU on which nodes?");
         if (nodes.Count == 0) return;
-        var verb = start ? "Starting" : "Stopping";
+        var verb = action switch { "start" => "Starting", "stop" => "Stopping", _ => "Restarting" };
         IReadOnlyList<(NodeConfig Node, CommandResultDto Result)> results = [];
         await AnsiConsole.Status().StartAsync($"{verb} GPU on {nodes.Count} node(s)...", async _ =>
         {
-            results = await _fleet.ForEachAsync(nodes, (c, t) => start ? c.GpuStartAsync(t) : c.GpuStopAsync(t), ct);
+            results = await _fleet.ForEachAsync(nodes, run, ct);
         });
         foreach (var (node, res) in results.OrderBy(r => r.Node.Name, StringComparer.OrdinalIgnoreCase))
             UiHelpers.Result(res.Ok, $"{node.Name}: {res.Message}");

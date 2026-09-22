@@ -252,6 +252,41 @@ chasing coverage.
 
 `AnsiConsole.Console` is a global that the markup tests swap, so
 [AssemblyInfo.cs](tests/MiningFleet.Console.Tests/AssemblyInfo.cs) disables parallel runs.
+| `WatchdogTests` | A start that worked is remembered across an agent restart and a stop clears it without clearing the pause memory; an old `miner.json` wants nothing; the first retry is immediate and later ones back off to five minutes |
+
+---
+
+## Map
+
+Every operator-visible entry point, read off the code. The wire routes live in
+[Agent HTTP API](#agent-http-api) below, the services in
+[Project Components](#project-components), the files in
+[Configuration](#configuration).
+
+### Console main menu (`Program.cs`)
+
+- Dashboard (live) — fleet table, Escape returns
+- Miner control — five submenus, sixteen actions total:
+  - CPU mining... — Start / Stop / Restart
+  - GPU mining... — Start / Stop / Restart
+  - Install / update... — xmrig (CPU) / lolMiner (GPU) / Remove miner (asks which)
+  - Settings... — Push pool settings / Start mining when the node boots / Power
+    limit while the PC is in use / Session monitor / GPU fleet defaults /
+    GPU per-node settings
+  - View logs... — CPU miner log / GPU miner log
+- Nodes — Discover from tailnet / Add manually / Edit node / Test connection /
+  Update agents / Enable-disable / Remove node
+- Update agents — same rollout as the one-shot `upgrade-agents`
+- Hardware & sensors, Economics, Pool & wallet — read-only screens
+- Settings — Fleet token / Pool & wallet / Electricity price / Refresh interval /
+  Default agent port
+
+### One-shot commands (`Cli.cs`)
+
+`status`, `start`, `stop`, `restart`, `economics`, `pool`, `update [--check]`,
+`upgrade-agents [--version=] [--force]`, `throttle [--sync|--set=N|--auto] [--log]`,
+`autostart [--on|--off]`, `gpu [--sync|--start|--stop]`, `version`, `help`.
+Commands that take nodes act on every enabled node when none are named.
 
 ---
 
@@ -262,7 +297,7 @@ All routes live under `/api/v1` and require the `X-Fleet-Token` header.
 | Method | Route | Purpose |
 |--------|-------|---------|
 | `GET` | `/info` | Hostname, OS, agent version, API version, uptime, elevation |
-| `GET` | `/status` | `NodeSnapshotDto` — info, miner, GPU miner and hardware in one call |
+| `GET` | `/status` | `NodeSnapshotDto` — info, miner, GPU miner and hardware in one call; carries the watchdog notices when a wanted miner is down |
 | `GET` | `/miner` | Miner status only |
 | `POST` | `/miner/start` | Start XMRig with the stored config |
 | `POST` | `/miner/stop` | Stop **all** XMRig processes on the node |
@@ -270,6 +305,9 @@ All routes live under `/api/v1` and require the `X-Fleet-Token` header.
 | `GET` | `/hardware` | Sensors, components, power estimate, sensor notice |
 | `GET` / `PUT` | `/config` | Read or patch the stored miner config |
 | `POST` | `/install` | Install or update XMRig into a target directory |
+| `GET` | `/miners` | Installed miners the node knows about, with configured and actual paths |
+| `GET` | `/dir` | List a directory on the node (`?path=`), for the remove-miner preview |
+| `POST` | `/uninstall` | Delete a miner directory after showing what it holds |
 | `GET` | `/logs` | Last 200 captured output lines |
 | `GET` | `/throttle` | Current power rung, the reason for it, and the load behind it |
 | `GET` | `/throttle/log` | The node's own record: one line a minute of CPU load whether or not throttling is on, plus every rung change and its readings |
@@ -277,6 +315,7 @@ All routes live under `/api/v1` and require the `X-Fleet-Token` header.
 | `POST` | `/gpu/start` | Start lolMiner with the stored GPU config |
 | `POST` | `/gpu/stop` | Stop **all** lolMiner processes on the node; XMRig is untouched |
 | `POST` | `/gpu/restart` | Stop, settle, start |
+| `POST` | `/gpu/install` | Install or update lolMiner into a target directory |
 | `GET` | `/gpu/logs` | Last 200 captured lolMiner output lines |
 | `POST` | `/agent/update` | Update the agent itself and restart into the new build |
 
@@ -702,18 +741,16 @@ mining-fleet/
       `desktop-ib88isg` 1.13.0 → 1.13.2 and `re-7lqd67ahcm0r` 1.13.0 → 1.13.2 (both came back on
       their own inside ten seconds). Every xmrig kept its pid, its huge pages and its shares
       across the restart, and the pushed pause rule survived the update on `mks68i7rtx`
+- [x] **A dead miner comes back on its own.** The watchdog (`MinerWanted`/`GpuWanted`
+      recorded by every start and stop that worked, `MinerWatchdogService` restarting what
+      is wanted but not running, failures backing off to five minutes with the reason in
+      `WatchdogNotice`, shown yellow in the dashboard's State/GPU cells instead of plain
+      idle (a pause notice still wins on the card)) was prompted by `re-7lqd67ahcm0r`
+      going idle with both miners dead and no flag set. Unit-tested, shipped in 1.17.18,
+      and confirmed live by the operator: a miner came back up on its own with nobody
+      giving a start command
 
 ### Implemented, Not Yet Verified Live ⏳
-- [ ] **Miner watchdog with a recorded wish.** `MinerService`/`GpuMinerService` persist
-      `MinerWanted`/`GpuWanted` on every start and stop that worked, and
-      `MinerWatchdogService` restarts a wanted miner that is not running — CPU and GPU,
-      first tick at agent start so a rebooted node also comes back even when
-      `AutoStartMiner` is off but the operator had started mining. A manual stop, a
-      pause and a throttle to zero are each checked first and never overridden; repeat
-      failures back off up to five minutes and report through `WatchdogNotice` on both
-      status DTOs (the console does not display it yet). Prompted by `re-7lqd67ahcm0r`
-      going idle at 04:37 with both miners dead, the agent alive and no flag set.
-      Unit-tested and built; no live kill-and-recover has been watched yet
 - [ ] **A reserved core surviving a reboot.** Everything up to that is verified (see above): the
       setting is stored on the node, and the service re-applies it within six seconds of the mask
       being taken away. What nobody has watched is `mks68i7rtx` coming back from a cold boot with

@@ -111,6 +111,29 @@ public sealed class MarkupSafetyTests
     }
 
     [Fact]
+    public void StatusBadge_renders_a_watchdog_notice_containing_markup()
+    {
+        UseTestConsole();
+        var state = new NodeState(
+            new NodeConfig { Name = "n", Host = "h" },
+            Snapshot: new MiningFleet.Contracts.NodeSnapshotDto(
+                new MiningFleet.Contracts.AgentInfoDto("h", "os", "1.0", "1", 1, true),
+                new MiningFleet.Contracts.MinerStatusDto
+                {
+                    Installed = true,
+                    Running = false,
+                    WatchdogNotice = "watchdog: restart 2 failed (xmrig exited immediately (code [1])).",
+                },
+                new MiningFleet.Contracts.HardwareDto()),
+            Error: null,
+            PolledAt: DateTimeOffset.Now);
+
+        // The notice carries miner output, which the app did not author. Would throw if it
+        // reached the parser unescaped.
+        AnsiConsole.MarkupLine(UiHelpers.StatusBadge(state));
+    }
+
+    [Fact]
     public void GpuBadge_renders_a_notice_containing_markup()
     {
         UseTestConsole();
@@ -128,6 +151,12 @@ public sealed class MarkupSafetyTests
             Running = true,
             Hashrate = 4.48,
             HashrateUnit = "g/s [tari]",
+        }));
+
+        AnsiConsole.MarkupLine(UiHelpers.GpuBadge(new MiningFleet.Contracts.GpuMinerStatusDto
+        {
+            Running = false,
+            WatchdogNotice = "watchdog: restart 1 failed (no [lolMiner] configured).",
         }));
     }
 

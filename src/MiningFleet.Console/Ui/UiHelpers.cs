@@ -42,6 +42,10 @@ public static class UiHelpers
         // until it is restarted through the fleet. Say so instead of showing a blank rate.
         { Mining: true, Hashrate: 0, Snapshot.Miner.ApiError: not null } => "[yellow]mining (no api)[/]",
         { Mining: true } => "[green]mining[/]",
+        // A wanted miner the watchdog cannot bring back is idle with a reason, not plain
+        // idle: the notice names the failure and the next attempt. It carries miner output,
+        // so it goes through Escape like every other text the app did not author.
+        { Mining: false, Snapshot.Miner.WatchdogNotice: { Length: > 0 } notice } => $"[yellow]{Escape(notice)}[/]",
         { Snapshot.Miner.Installed: false } => "[yellow]no miner[/]",
         _ => "[grey]idle[/]",
     };
@@ -95,7 +99,11 @@ public static class UiHelpers
     {
         if (gpu is null) return "[grey]?[/]";
         if (!gpu.Running)
-            return gpu.Notice is { Length: > 0 } notice ? $"[grey]{Escape(notice)}[/]" : "[grey]-[/]";
+        {
+            if (gpu.Notice is { Length: > 0 } notice) return $"[grey]{Escape(notice)}[/]";
+            if (gpu.WatchdogNotice is { Length: > 0 } watchdog) return $"[yellow]{Escape(watchdog)}[/]";
+            return "[grey]-[/]";
+        }
 
         if (gpu.Hashrate is not { } rate) return "[yellow]starting[/]";
         return $"[green]{rate:N2} {Escape(gpu.HashrateUnit ?? "")}[/]".Replace(" [/]", "[/]");
