@@ -18,8 +18,8 @@ The product name is mining-fleet. GitHub is
 stopped. The CPU job object stays `Local\xmrig-fleet-miner-cpu` so a restarted
 agent can still lift its own limit.
 
-**Platform**: .NET 8 (`net8.0`), Windows 10/11 today, Linux-ready
-**Language**: C# 12
+**Platform**: .NET 10 (`net10.0`), Windows 10/11 today, Linux-ready
+**Language**: C# 14
 **Domain**: Cryptocurrency mining operations / fleet telemetry and control
 
 ---
@@ -30,9 +30,9 @@ agent can still lift its own limit.
 
 | Layer | Technology | Notes |
 |-------|-----------|-------|
-| Node agent | ASP.NET Core Minimal API (`net8.0`) | `mining-fleet-agent.exe` (`xmrig-fleet-agent.exe` shim), Kestrel on `0.0.0.0:47800` |
-| Operator console | .NET 8 console + Spectre.Console | `mining-fleet.exe` (`xmrig-fleet.exe` shim), interactive TUI **and** one-shot commands |
-| Shared contracts | .NET 8 class library | DTOs referenced by both sides |
+| Node agent | ASP.NET Core Minimal API (`net10.0`) | `mining-fleet-agent.exe` (`xmrig-fleet-agent.exe` shim), Kestrel on `0.0.0.0:47800` |
+| Operator console | .NET 10 console + Spectre.Console | `mining-fleet.exe` (`xmrig-fleet.exe` shim), interactive TUI **and** one-shot commands |
+| Shared contracts | .NET 10 class library | DTOs referenced by both sides |
 | Transport | Plain HTTP over the tailnet | Shared-secret header, no TLS (see **Security Model**) |
 | Service hosting | Windows Service / systemd | Same binary, both hosts registered unconditionally |
 | Miner telemetry | XMRig HTTP API on loopback | Agent starts XMRig with a bearer token kept in `xmrig-api.token` |

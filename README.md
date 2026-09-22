@@ -579,6 +579,6 @@ dotnet run --project src/MiningFleet.Agent      # агент в консоли, 
 dotnet run --project src/MiningFleet.Console    # TUI
 ```
 
-Целевой фреймворк — .NET 8. Датчики железа — LibreHardwareMonitorLib; агенту нужны права
+Целевой фреймворк — .NET 10. Датчики железа — LibreHardwareMonitorLib; агенту нужны права
 администратора, иначе часть датчиков будет пустой (консоль это показывает в Nodes → Test
 connection).
