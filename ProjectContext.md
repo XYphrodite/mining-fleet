@@ -190,6 +190,7 @@ hardware.
 | `GpuMinerService` | Start/stop/restart lolMiner, read its loopback API, keep the last 200 output lines. A separate class from `MinerService` on purpose: it runs at Normal priority (Task Scheduler's default of 7 cost 18% of shares to staleness), it never touches an `xmrig` process, and it settles for five seconds rather than 700 ms because a card that will not mine fails quietly |
 | `GpuPauseService` | Acts on the stand-down rule for the card |
 | `MinerPauseService` | The same for the CPU miner, and it stops rather than throttles: a capped miner still holds its 2.3 GB dataset and a thread on every core, which is most of what makes a 16 GB node feel slow while somebody plays on it |
+| `MinerWatchdogService` | Restarts a wanted miner that is not running, CPU and GPU. Wanted means a start that worked and no stop since; a crash changes nothing, an operator's stop, a pause and a throttle to zero each say otherwise and are checked first. Repeat failures back off (immediate, 15s, 30s, 1m, 2m, 5m cap) and name the reason in `WatchdogNotice`. The backoff math lives in the pure, clock-injected `WatchdogPolicy`, the part the tests drive |
 | `UsageProbe` | The observations both rules need — is that port carrying traffic, is that program running. Reads the TCP table through `IPGlobalProperties` (`Get-NetTCPConnection` sees nothing from a service) and takes one snapshot of the process table per tick rather than one per watched name |
 | `GpuPauseRule` | The stand-down rule itself, pure and clock-injected, and the part the tests drive. Both halves are here: which conditions are met (`Evaluate`) and how long the card waits before coming back |
 
@@ -703,6 +704,16 @@ mining-fleet/
       across the restart, and the pushed pause rule survived the update on `mks68i7rtx`
 
 ### Implemented, Not Yet Verified Live ⏳
+- [ ] **Miner watchdog with a recorded wish.** `MinerService`/`GpuMinerService` persist
+      `MinerWanted`/`GpuWanted` on every start and stop that worked, and
+      `MinerWatchdogService` restarts a wanted miner that is not running — CPU and GPU,
+      first tick at agent start so a rebooted node also comes back even when
+      `AutoStartMiner` is off but the operator had started mining. A manual stop, a
+      pause and a throttle to zero are each checked first and never overridden; repeat
+      failures back off up to five minutes and report through `WatchdogNotice` on both
+      status DTOs (the console does not display it yet). Prompted by `re-7lqd67ahcm0r`
+      going idle at 04:37 with both miners dead, the agent alive and no flag set.
+      Unit-tested and built; no live kill-and-recover has been watched yet
 - [ ] **A reserved core surviving a reboot.** Everything up to that is verified (see above): the
       setting is stored on the node, and the service re-applies it within six seconds of the mask
       being taken away. What nobody has watched is `mks68i7rtx` coming back from a cold boot with
@@ -968,7 +979,7 @@ mining-fleet/
 ## Document Information
 
 **Document Version**: v1.2
-**Last Updated**: 2026-09-13
+**Last Updated**: 2026-09-22
 **Product Version**: 1.17.0
 **Status**: Active
 **Repository**: `c:\Repos\xmrig-fleet` (local folder; branch `master`), published at

@@ -126,6 +126,8 @@ public sealed class MinerConfigStore
                 MinerStoppedByPause = patch.MinerStoppedByPause ?? _current.MinerStoppedByPause,
                 GpuMiner = MergeGpuMiner(_current.GpuMiner, patch.GpuMiner),
                 GpuStoppedByPause = patch.GpuStoppedByPause ?? _current.GpuStoppedByPause,
+                MinerWanted = patch.MinerWanted ?? _current.MinerWanted,
+                GpuWanted = patch.GpuWanted ?? _current.GpuWanted,
             };
             Save(_current);
             return _current;

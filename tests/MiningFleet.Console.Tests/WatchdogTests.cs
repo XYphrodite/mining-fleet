@@ -1,0 +1,86 @@
+using MiningFleet.Agent;
+using MiningFleet.Console;
+using MiningFleet.Contracts;
+
+namespace MiningFleet.Console.Tests;
+
+/// <summary>
+/// Guards the watchdog: a wanted miner that died comes back, a stopped one stays down.
+///
+/// The failure this protects against is the quiet 04:37 on `re-7lqd67ahcm0r`, where xmrig
+/// and lolMiner both died mid-night with the agent alive, no pause or throttle flag set,
+/// and nothing anywhere to restart them. The wish itself is recorded by starts and stops;
+/// a crash records nothing, which is how the two tell apart.
+/// </summary>
+public sealed class WatchdogTests
+{
+    private static readonly DateTimeOffset Start = new(2026, 9, 22, 4, 0, 0, TimeSpan.Zero);
+
+    [Fact]
+    public void The_first_retry_is_immediate_and_later_ones_back_off()
+    {
+        Assert.Equal(TimeSpan.Zero, WatchdogPolicy.Delay(1));
+        Assert.Equal(TimeSpan.FromSeconds(15), WatchdogPolicy.Delay(2));
+        Assert.Equal(TimeSpan.FromSeconds(30), WatchdogPolicy.Delay(3));
+        Assert.Equal(TimeSpan.FromMinutes(1), WatchdogPolicy.Delay(4));
+        Assert.Equal(TimeSpan.FromMinutes(2), WatchdogPolicy.Delay(5));
+
+        // A miner that never starts (bad pool, bad wallet) must not hammer the pool forever.
+        Assert.Equal(TimeSpan.FromMinutes(5), WatchdogPolicy.Delay(6));
+        Assert.Equal(TimeSpan.FromMinutes(5), WatchdogPolicy.Delay(100));
+    }
+
+    [Fact]
+    public void A_death_restarts_at_once_but_a_failure_waits_its_turn()
+    {
+        // No attempt yet: due, so a miner killed after hours of work comes back immediately.
+        Assert.True(WatchdogPolicy.IsDue(1, null, Start));
+
+        var attempted = Start;
+        Assert.False(WatchdogPolicy.IsDue(2, attempted, attempted.AddSeconds(14)));
+        Assert.True(WatchdogPolicy.IsDue(2, attempted, attempted.AddSeconds(15)));
+    }
+
+    [Fact]
+    public void The_wish_survives_an_agent_restart()
+    {
+        using var dir = new TempDirectory();
+        var store = new MinerConfigStore(dir.Path);
+
+        store.Update(new MinerConfigDto { MinerWanted = true, GpuWanted = true });
+
+        // MinerConfigStore.Update enumerates every field by hand, so one forgotten there is
+        // accepted over HTTP, echoed back as saved, and dropped on the next write.
+        var afterRestart = new MinerConfigStore(dir.Path).Current;
+        Assert.True(afterRestart.MinerWanted);
+        Assert.True(afterRestart.GpuWanted);
+    }
+
+    [Fact]
+    public void A_stop_clears_the_wish_but_keeps_the_pause_memory()
+    {
+        using var dir = new TempDirectory();
+        var store = new MinerConfigStore(dir.Path);
+
+        store.Update(new MinerConfigDto { MinerWanted = true, MinerStoppedByPause = true });
+        var saved = store.Update(new MinerConfigDto { MinerWanted = false });
+
+        // An explicit stop wins, and the pause still owns the resume: clearing one must not
+        // clear the other, or a game closing would either mine over somebody's shoulder or
+        // never mine again depending on which write landed last.
+        Assert.False(saved.MinerWanted);
+        Assert.True(saved.MinerStoppedByPause);
+    }
+
+    [Fact]
+    public void An_old_miner_json_wants_nothing()
+    {
+        using var dir = new TempDirectory();
+        var store = new MinerConfigStore(dir.Path);
+
+        // A node that never heard a start or a stop from this agent version answers null,
+        // which the watchdog reads as not wanted. The first explicit start records it.
+        Assert.Null(store.Current.MinerWanted);
+        Assert.Null(store.Current.GpuWanted);
+    }
+}

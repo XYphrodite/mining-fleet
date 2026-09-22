@@ -98,7 +98,10 @@ public sealed class GpuMinerService : IDisposable
                     "Clear that setting to start in the agent's own session, or keep using the scheduled task on the node.");
 
             if (FindRunning() is not null)
+            {
+                _config.Update(new MinerConfigDto { GpuWanted = true });
                 return CommandResultDto.Failure("The GPU miner is already running.");
+            }
 
             var exe = ResolveExecutable();
             if (exe is null)
@@ -141,6 +144,9 @@ public sealed class GpuMinerService : IDisposable
                 return CommandResultDto.Failure($"The GPU miner exited immediately (code {process.ExitCode}). {tail}");
             }
 
+            // Same shape as the CPU miner: a start that worked records the wish, a failed
+            // one changes nothing, and the watchdog reads it back.
+            _config.Update(new MinerConfigDto { GpuWanted = true });
             return CommandResultDto.Success($"GPU miner started on {settings.Algorithm}, pid {process.Id}.");
         }
         catch (Exception ex)
@@ -163,6 +169,7 @@ public sealed class GpuMinerService : IDisposable
             if (processes.Count == 0)
             {
                 _process = null;
+                _config.Update(new MinerConfigDto { GpuWanted = false });
                 return CommandResultDto.Success("The GPU miner was not running.");
             }
 
@@ -186,6 +193,8 @@ public sealed class GpuMinerService : IDisposable
             }
 
             _process = null;
+            if (stopped > 0)
+                _config.Update(new MinerConfigDto { GpuWanted = false });
             return stopped > 0
                 ? CommandResultDto.Success($"Stopped {stopped} GPU miner process(es).")
                 : CommandResultDto.Failure("Found the GPU miner but could not stop it. Try running the agent elevated.");

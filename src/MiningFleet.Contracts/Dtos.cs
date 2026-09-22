@@ -40,6 +40,12 @@ public sealed record MinerStatusDto
     /// <summary>Set when the agent could not reach the xmrig HTTP API even though the process is alive.</summary>
     public string? ApiError { get; init; }
 
+    /// <summary>
+    /// Why the watchdog is not running a miner it wants running, when that is the case —
+    /// e.g. restarts kept failing and the next attempt waits. Null when nothing is owed.
+    /// </summary>
+    public string? WatchdogNotice { get; init; }
+
     // RandomX throughput is decided almost entirely by these, not by CPU model: a node that
     // fails to get its huge pages runs several times slower with no other symptom. Reporting
     // them turns "why is this node slow" from guesswork into a reading.
@@ -246,6 +252,25 @@ public sealed record MinerConfigDto
     /// never mines again, or starts mining over somebody's shoulder.
     /// </summary>
     public bool? GpuStoppedByPause { get; init; }
+
+    /// <summary>
+    /// Whether the CPU miner should be running. Set by a start that worked, cleared by a stop
+    /// that worked — whatever asked for either. A crash changes nothing, which is the point:
+    /// the watchdog restarts a wanted miner and leaves an unwanted one alone, so an operator's
+    /// stop stays stopped while a killed process comes back.
+    ///
+    /// Null on a node that never heard a start or a stop from this agent version: unknown, and
+    /// treated as not wanted. The first explicit start after the upgrade records the answer.
+    /// </summary>
+    public bool? MinerWanted { get; init; }
+
+    /// <summary>
+    /// The same, for the graphics card. Kept apart from
+    /// <see cref="GpuMinerSettingsDto.Enabled"/> on purpose: that flag says the card may mine,
+    /// this one says it should be mining now. A manual <c>gpu --stop</c> must not be undone by
+    /// the watchdog.
+    /// </summary>
+    public bool? GpuWanted { get; init; }
 }
 
 /// <summary>
@@ -405,6 +430,14 @@ public sealed record GpuMinerStatusDto
     /// the operator" are different answers and the console must not print one for the other.
     /// </summary>
     public string? Notice { get; init; }
+
+    /// <summary>
+    /// Why the watchdog is not running a miner it wants running, when that is the case —
+    /// e.g. restarts kept failing and the next attempt waits. Kept apart from
+    /// <see cref="Notice"/> because the pause service rewrites that field on its own tick.
+    /// Null when nothing is owed.
+    /// </summary>
+    public string? WatchdogNotice { get; init; }
 }
 
 /// <summary>One card as the GPU miner sees it, which is not always what the sensors see.</summary>

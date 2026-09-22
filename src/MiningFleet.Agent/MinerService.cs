@@ -76,7 +76,12 @@ public sealed class MinerService : IDisposable
         try
         {
             if (FindRunning() is not null)
+            {
+                // Somebody asked for mining and mining is what is happening. A hand-started
+                // miner adopted this way is restarted by the watchdog if it later exits.
+                _config.Update(new MinerConfigDto { MinerWanted = true });
                 return CommandResultDto.Failure("xmrig is already running.");
+            }
 
             var exe = ResolveExecutable();
             if (exe is null)
@@ -113,6 +118,9 @@ public sealed class MinerService : IDisposable
                 return CommandResultDto.Failure($"xmrig exited immediately (code {process.ExitCode}). {tail}");
             }
 
+            // Recorded only after a start that worked, so a wanted miner stays wanted across
+            // a crash, while a failed start changes nothing. The watchdog reads this back.
+            _config.Update(new MinerConfigDto { MinerWanted = true });
             return CommandResultDto.Success($"xmrig started, pid {process.Id}.");
         }
         catch (Exception ex)
@@ -135,6 +143,9 @@ public sealed class MinerService : IDisposable
             if (processes.Count == 0)
             {
                 _process = null;
+                // An explicit stop wins over history: even a wanted miner stays down once
+                // somebody says so. A crash sets no flag, which is how the two tell apart.
+                _config.Update(new MinerConfigDto { MinerWanted = false });
                 return CommandResultDto.Success("xmrig was not running.");
             }
 
@@ -158,6 +169,8 @@ public sealed class MinerService : IDisposable
             }
 
             _process = null;
+            if (stopped > 0)
+                _config.Update(new MinerConfigDto { MinerWanted = false });
             return stopped > 0
                 ? CommandResultDto.Success($"Stopped {stopped} xmrig process(es).")
                 : CommandResultDto.Failure("Found xmrig but could not stop it. Try running the agent elevated.");
