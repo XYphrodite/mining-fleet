@@ -101,13 +101,16 @@ foreach ($t in $targets) {
         if ($archive -ne $primary) { Copy-Item $primary $archive -Force }
         $size = [math]::Round((Get-Item $archive).Length / 1MB, 1)
         Write-Host "    $asset  $size MB"
+        # The self-update path requires a checksum sidecar next to every payload.
+        $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+        Set-Content -LiteralPath "$archive.sha256" -Value "$hash  $asset" -Encoding ascii
     }
 }
 
 if ($SkipPublish) {
     Write-Host ''
     Write-Host "Archives are in $OutputPath. Publish them with:" -ForegroundColor Cyan
-    Write-Host "  gh release create $Version $OutputPath\*.zip --title $Version --notes '...'"
+    Write-Host "  gh release create $Version $OutputPath\*.zip $OutputPath\*.sha256 --title $Version --notes '...'"
     return
 }
 
@@ -116,7 +119,7 @@ if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
 }
 
 Write-Host "==> Creating release $Version" -ForegroundColor Cyan
-$assets = (Get-ChildItem $OutputPath -Filter *.zip).FullName
+$assets = ((Get-ChildItem $OutputPath -Filter *.zip).FullName + (Get-ChildItem $OutputPath -Filter *.sha256).FullName) | Where-Object { $_ }
 $ghArgs = @('release', 'create', $Version) + $assets + @('--title', $Version, '--notes', $Notes)
 if ($Draft) { $ghArgs += '--draft' }
 

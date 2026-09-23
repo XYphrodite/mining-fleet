@@ -4,6 +4,7 @@ using System.Net.Http.Headers;
 using System.Reflection;
 using System.Text.Json;
 using MiningFleet.Contracts;
+using SelfUpdateKit;
 
 namespace MiningFleet.Agent;
 
@@ -11,19 +12,21 @@ namespace MiningFleet.Agent;
 /// Updates the agent itself from a published mining-fleet release, so a fleet-wide roll-out does
 /// not need an RDP session per node.
 ///
-/// Two rules make this safe to drive remotely:
+/// Three rules make this safe to drive remotely:
 ///
 /// 1. <see cref="ProtectedFiles"/> is never overwritten. The node's identity lives in those files
 ///    - the fleet token, the xmrig API token and the pushed miner config. Replacing the token
 ///    locks the console out of the very node it was updating, and only a visit to the machine
 ///    gets it back.
-/// 2. The payload is verified to contain the agent executable before anything is moved. A wrong
-///    or truncated archive must fail loudly while the node still works, never half-installed.
+/// 2. The payload is checksum-verified and proven to contain the agent executable before
+///    anything is moved. A wrong or truncated archive must fail loudly while the node still
+///    works, never half-installed.
+/// 3. Every replaced file is moved aside first and restored on failure, so an interrupted
+///    swap rolls back instead of stranding the node.
 ///
-/// The running executable cannot be deleted, but it can be renamed, so each file is moved aside
-/// to <c>.old</c> before the new one is copied over. A detached helper then starts the service
-/// again and this process leaves cleanly - see <see cref="ScheduleRestart"/> for why not simply
-/// exiting non-zero. The miner is a separate process and keeps hashing throughout.
+/// A detached helper then starts the service again and this process leaves cleanly - see
+/// <see cref="ScheduleRestart"/> for why not simply exiting non-zero. The miner is a
+/// separate process and keeps hashing throughout.
 /// </summary>
 public sealed class AgentUpdateService
 {
@@ -58,6 +61,60 @@ public sealed class AgentUpdateService
     public async Task<AgentUpdateResultDto> UpdateAsync(AgentUpdateRequestDto request, CancellationToken ct)
     {
         var from = CurrentVersion;
+
+        // An explicit URL is the operator's override: it skips release resolution and the
+        // checksum (there is none published for an arbitrary address), but never the
+        // payload check, the identity-file protection, or the restart handover.
+        if (!string.IsNullOrWhiteSpace(request.DownloadUrl))
+            return await UpdateFromUrlAsync(request.DownloadUrl!, from, ct);
+
+        var options = FleetAgentUpdate.Options();
+        using var source = new GitHubReleaseSource(options);
+
+        ReleaseDescriptor release;
+        try
+        {
+            release = await source.ResolveAsync(FleetAgentUpdate.NormalizeTag(request.Version), ct);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or InvalidDataException)
+        {
+            _log.LogError(ex, "Agent update failed");
+            return new AgentUpdateResultDto(false, ex.Message, from, null, false);
+        }
+
+        if (!request.Force && IsSameVersion(from, release.Tag))
+            return new AgentUpdateResultDto(true, $"Already running {from}; nothing to do.", from, release.Tag, false);
+
+        try
+        {
+            _log.LogInformation("Agent update: installing {Tag}", release.Tag);
+            var service = new SelfUpdateService(
+                FleetAgentUpdate.InstalledExePath(),
+                FleetAgentUpdate.InstalledVersion(),
+                source,
+                options,
+                probe: FleetAgentUpdate.ProbeExecutableAsync);
+            var report = await service.UpdateAsync(new SelfUpdateRequest(Tag: release.Tag), ct);
+            _log.LogWarning("Agent update: replaced, restarting into {Version}", report.Tag);
+
+            ScheduleRestart();
+
+            return new AgentUpdateResultDto(
+                true,
+                $"Updated from {from} to {report.Tag}. Restarting; the miner keeps running.",
+                from,
+                report.Tag,
+                true);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidDataException or UnauthorizedAccessException)
+        {
+            _log.LogError(ex, "Agent update failed");
+            return new AgentUpdateResultDto(false, ex.Message, from, null, false);
+        }
+    }
+
+    private async Task<AgentUpdateResultDto> UpdateFromUrlAsync(string url, string from, CancellationToken ct)
+    {
         var staging = Path.Combine(Path.GetTempPath(), $"{AgentIdentity.Name}-update-{Guid.NewGuid():N}");
         var archive = staging + ".zip";
 
@@ -65,25 +122,6 @@ public sealed class AgentUpdateService
         {
             var http = _httpFactory.CreateClient("github");
             http.DefaultRequestHeaders.UserAgent.ParseAdd(AgentIdentity.Name);
-
-            string url;
-            string? tag = null;
-
-            if (!string.IsNullOrWhiteSpace(request.DownloadUrl))
-            {
-                url = request.DownloadUrl!;
-            }
-            else
-            {
-                var asset = await ResolveAssetAsync(http, request.Version, ct);
-                if (asset is null)
-                    return new AgentUpdateResultDto(false, $"No release asset named {string.Join(" or ", AssetNames)} was found.", from, null, false);
-
-                (url, tag) = asset.Value;
-
-                if (!request.Force && IsSameVersion(from, tag))
-                    return new AgentUpdateResultDto(true, $"Already running {from}; nothing to do.", from, tag, false);
-            }
 
             _log.LogInformation("Agent update: downloading {Url}", url);
             await DownloadAsync(http, url, archive, ct);
@@ -94,18 +132,18 @@ public sealed class AgentUpdateService
             // Refuse to touch the installation unless the payload is really an agent build.
             var exeName = AgentIdentity.FindPayloadExe(staging);
             if (exeName is null)
-                return new AgentUpdateResultDto(false, $"Downloaded payload does not contain {string.Join(" or ", AgentIdentity.ExeFileNames)}; installation left untouched.", from, tag, false);
+                return new AgentUpdateResultDto(false, $"Downloaded payload does not contain {string.Join(" or ", AgentIdentity.ExeFileNames)}; installation left untouched.", from, null, false);
 
-            var written = SwapIntoPlace(staging, InstallDirectory);
-            _log.LogWarning("Agent update: {Count} files replaced, restarting into {Version}", written, tag ?? "the new build");
+            var replaced = PayloadSwap.Swap(staging, InstallDirectory, FleetAgentUpdate.Options());
+            _log.LogWarning("Agent update: {Count} files replaced, restarting into the downloaded build", replaced.Count);
 
             ScheduleRestart();
 
             return new AgentUpdateResultDto(
                 true,
-                $"Updated from {from} to {tag ?? "the downloaded build"} ({written} files). Restarting; the miner keeps running.",
+                $"Updated from {from} to the downloaded build ({replaced.Count} files). Restarting; the miner keeps running.",
                 from,
-                tag,
+                null,
                 true);
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidDataException or UnauthorizedAccessException or JsonException)
@@ -212,39 +250,6 @@ public sealed class AgentUpdateService
         return path;
     }
 
-    /// <summary>
-    /// Copies the payload over the installation, renaming any file in use out of the way first.
-    /// Files in <see cref="ProtectedFiles"/> are skipped: they carry this node's identity.
-    /// </summary>
-    private static int SwapIntoPlace(string source, string target)
-    {
-        var written = 0;
-
-        foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
-        {
-            var relative = Path.GetRelativePath(source, file);
-
-            if (ProtectedFiles.Contains(Path.GetFileName(relative), StringComparer.OrdinalIgnoreCase))
-                continue;
-
-            var destination = Path.Combine(target, relative);
-            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-
-            if (File.Exists(destination))
-            {
-                var backup = destination + BackupSuffix;
-                TryDelete(backup);
-                // The running executable cannot be deleted, but it can be renamed.
-                File.Move(destination, backup);
-            }
-
-            File.Copy(file, destination, overwrite: true);
-            written++;
-        }
-
-        return written;
-    }
-
     /// <summary>Removes files displaced by an earlier update. Safe to call on every start.</summary>
     public static void CleanUpPreviousUpdate()
     {
@@ -252,67 +257,14 @@ public sealed class AgentUpdateService
         {
             foreach (var stale in Directory.EnumerateFiles(InstallDirectory, "*" + BackupSuffix, SearchOption.AllDirectories))
                 TryDelete(stale);
+            var replacer = new ExecutableReplacer();
+            foreach (var name in AgentIdentity.ExeFileNames)
+                replacer.RemoveRetiredCopies(Path.Combine(InstallDirectory, name));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             // Leftovers waste a few megabytes; never let cleanup stop the agent from starting.
         }
-    }
-
-    private static async Task<(string Url, string Tag)?> ResolveAssetAsync(HttpClient http, string? version, CancellationToken ct)
-    {
-        foreach (var repo in ReleaseAssets.GitHubRepositories)
-        {
-            var found = await ResolveAssetFromRepoAsync(http, repo, version, ct);
-            if (found is not null) return found;
-        }
-
-        return null;
-    }
-
-    private static async Task<(string Url, string Tag)?> ResolveAssetFromRepoAsync(
-        HttpClient http, string repo, string? version, CancellationToken ct)
-    {
-        using var response = await http.GetAsync($"https://api.github.com/repos/{repo}/releases", ct);
-        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return null;
-        response.EnsureSuccessStatusCode();
-
-        await using var stream = await response.Content.ReadAsStreamAsync(ct);
-        using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
-
-        var wanted = string.IsNullOrWhiteSpace(version) || version.Equals("latest", StringComparison.OrdinalIgnoreCase)
-            ? null
-            : version;
-
-        foreach (var release in doc.RootElement.EnumerateArray())
-        {
-            var tag = release.TryGetProperty("tag_name", out var t) ? t.GetString() : null;
-            if (tag is null) continue;
-            if (wanted is not null && !tag.Equals(wanted, StringComparison.OrdinalIgnoreCase)) continue;
-            if (wanted is null && release.TryGetProperty("prerelease", out var pre) && pre.ValueKind == JsonValueKind.True) continue;
-
-            if (!release.TryGetProperty("assets", out var assets) || assets.ValueKind != JsonValueKind.Array) continue;
-
-            var available = new List<(string Name, string Url)>();
-            foreach (var asset in assets.EnumerateArray())
-            {
-                var name = asset.TryGetProperty("name", out var n) ? n.GetString() : null;
-                var url = asset.TryGetProperty("browser_download_url", out var u) ? u.GetString() : null;
-                if (name is null || url is null) continue;
-                available.Add((name, url));
-            }
-
-            var picked = PickAsset(available.Select(a => a.Name));
-            if (picked is not null)
-            {
-                var match = available.First(a => a.Name.Equals(picked, StringComparison.OrdinalIgnoreCase));
-                return (match.Url, tag);
-            }
-
-            if (wanted is not null) return null;
-        }
-
-        return null;
     }
 
     /// <summary>Preferred agent zip, e.g. mining-fleet-agent-win-x64.zip. See <see cref="AssetNames"/>.</summary>

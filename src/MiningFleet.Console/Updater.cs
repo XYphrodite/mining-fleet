@@ -8,7 +8,7 @@ public static class Updater
 {
     public static async Task<int> RunAsync(FleetConfig config, bool checkOnly, CancellationToken ct)
     {
-        using var service = new UpdateService(config.Update);
+        var service = new UpdateService(config.Update);
 
         UpdateInfo? update;
         try
@@ -109,7 +109,7 @@ public static class Updater
 
         try
         {
-            using var service = new UpdateService(config.Update);
+            var service = new UpdateService(config.Update);
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeout.CancelAfter(TimeSpan.FromSeconds(4));
 

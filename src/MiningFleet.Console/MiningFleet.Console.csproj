@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\MiningFleet.Contracts\MiningFleet.Contracts.csproj" />
+    <ProjectReference Include="..\..\..\self-update-kit\src\SelfUpdateKit\SelfUpdateKit.csproj" />
   </ItemGroup>
 
   <ItemGroup>
