@@ -17,6 +17,9 @@
         $env:MINING_FLEET_REPO    = 'owner/name'   # release source
         $env:MINING_FLEET_VERSION = 'v1.2.0'       # a specific tag instead of the newest
         $env:MINING_FLEET_DIR     = 'D:\tools\xf'  # install somewhere else
+        $env:MINING_FLEET_VARIANT = 'auto'         # auto|full|light: auto picks the small
+                                                   # framework-dependent zip when the
+                                                   # .NET 10 runtime is installed
 #>
 
 $ErrorActionPreference = 'Stop'
@@ -42,6 +45,43 @@ $target = if ($dirOverride) { $dirOverride } elseif (Test-Path $legacyDir) { $le
 
 function Write-Step([string]$Text) { Write-Host "==> $Text" -ForegroundColor Cyan }
 
+# Major of the .NET runtime the light package targets. Bump together with the apps'
+# target framework. Console apps, so Microsoft.NETCore.App qualifies; a machine with
+# Microsoft.WindowsDesktop.App has the base runtime too. Same rule as
+# ReleaseAssets.IsCompatibleRuntimeLine in the source.
+$DotNetMajor = '10'
+$VariantMarker = '.mining-fleet-variant'
+
+function Test-DotNetRuntimeLine {
+    param([string]$Line, [string]$Major = $DotNetMajor)
+    return [bool]($Line -match "^Microsoft\.(NETCore|WindowsDesktop)\.App\s+$Major\.")
+}
+
+function Test-DotNetRuntime {
+    try {
+        $runtimes = & dotnet --list-runtimes 2>$null
+    } catch {
+        return $false
+    }
+    foreach ($line in @($runtimes)) {
+        if (Test-DotNetRuntimeLine -Line ([string]$line)) { return $true }
+    }
+    return $false
+}
+
+function Select-FleetAsset {
+    param(
+        [string]$Variant = 'auto',
+        [bool]$HasRuntime = $false,
+        [Parameter(Mandatory = $true)][string[]]$FullNames,
+        [Parameter(Mandatory = $true)][string[]]$LightNames
+    )
+    if ($Variant -eq 'light') { return $LightNames }
+    if ($Variant -eq 'full') { return $FullNames }
+    if ($HasRuntime) { return $LightNames }
+    return $FullNames
+}
+
 # Release assets are named per platform. Prefer mining-fleet-win-x64.zip, fall back to
 # the xmrig-fleet alias so a console installed before the rename still updates.
 $arch = if ([Environment]::Is64BitOperatingSystem) {
@@ -52,6 +92,18 @@ $arch = if ([Environment]::Is64BitOperatingSystem) {
 # Matched in full: a release also ships the agent zip, and a substring match on the
 # platform would install the node agent instead of the console.
 $assetNames = @("mining-fleet-win-$arch.zip", "xmrig-fleet-win-$arch.zip")
+$lightAssetNames = @("mining-fleet-win-$arch-light.zip", "xmrig-fleet-win-$arch-light.zip")
+
+$variant = Get-FleetEnv 'VARIANT'
+if (-not $variant) { $variant = 'auto' }
+$variant = $variant.Trim().ToLowerInvariant()
+if ($variant -notin @('auto', 'full', 'light')) { throw "MINING_FLEET_VARIANT must be auto, full or light, not '$variant'." }
+$hasRuntime = Test-DotNetRuntime
+if ($variant -eq 'light' -and -not $hasRuntime) {
+    throw 'The light package needs the .NET runtime, which was not found. Install the runtime or set MINING_FLEET_VARIANT=full.'
+}
+$assetNames = Select-FleetAsset -Variant $variant -HasRuntime $hasRuntime -FullNames $assetNames -LightNames $lightAssetNames
+$variantName = if ($assetNames[0] -like '*-light.zip') { 'light' } else { 'full' }
 
 Write-Step "Looking up the newest release of $repo"
 $api = if ($version) { "https://api.github.com/repos/$repo/releases/tags/$version" }
@@ -146,6 +198,8 @@ $modernExe = Join-Path $binDir 'mining-fleet.exe'
 $legacyExe = Join-Path $binDir 'xmrig-fleet.exe'
 if ((Test-Path $modernExe) -and -not (Test-Path $legacyExe)) { Copy-Item $modernExe $legacyExe }
 if ((Test-Path $legacyExe) -and -not (Test-Path $modernExe)) { Copy-Item $legacyExe $modernExe }
+# Records which kind of build this is, so `mining-fleet update` keeps the variant.
+[IO.File]::WriteAllText((Join-Path $binDir $VariantMarker), $variantName)
 
 # Put it on PATH for future shells, and on this one so it can be run right away.
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
@@ -157,7 +211,7 @@ if (($userPath -split ';') -notcontains $binDir) {
 if (($env:Path -split ';') -notcontains $binDir) { $env:Path = "$env:Path;$binDir" }
 
 Write-Host ''
-Write-Host "mining-fleet $($release.tag_name) installed to $binDir" -ForegroundColor Green
+Write-Host "mining-fleet $($release.tag_name) ($variantName) installed to $binDir" -ForegroundColor Green
 Write-Host ''
 Write-Host 'Next:' -ForegroundColor Cyan
 Write-Host '  mining-fleet            # interactive console: set the token, wallet and kWh price'

@@ -12,7 +12,12 @@ namespace MiningFleet.Agent;
 /// </summary>
 public static class FleetAgentUpdate
 {
-    public static ReleaseSourceOptions Options()
+    /// <summary>
+    /// Options for one variant. The default overload keeps the installed variant (see
+    /// <see cref="InstalledVariant"/>), so a full install never drifts onto light zips.
+    /// Identity files stay excluded in every variant.
+    /// </summary>
+    public static ReleaseSourceOptions Options(FleetVariant variant)
     {
         var options = new ReleaseSourceOptions
         {
@@ -22,11 +27,21 @@ public static class FleetAgentUpdate
             UserAgent = AgentIdentity.Name,
         };
         options.FallbackRepositories.AddRange(ReleaseAssets.GitHubRepositories.Skip(1));
-        options.ExecutableAssetNames.AddRange(ReleaseAssets.AgentZipNames);
+        options.ExecutableAssetNames.AddRange(ReleaseAssets.AgentZipNamesFor(variant));
         options.ProbeExecutableNames.AddRange(AgentIdentity.ExeFileNames);
         options.ExcludedFileNames.AddRange(AgentUpdateService.ProtectedFileNames);
         return options;
     }
+
+    public static ReleaseSourceOptions Options() =>
+        Options(InstalledVariant());
+
+    /// <summary>
+    /// Which package this installation came from. The installer records it in
+    /// <see cref="ReleaseAssets.VariantMarkerFileName"/> next to the executable.
+    /// </summary>
+    public static FleetVariant InstalledVariant() =>
+        ReleaseAssets.InstalledVariant(Environment.ProcessPath);
 
     public static ReleaseVersion InstalledVersion()
     {

@@ -14,7 +14,11 @@ public static class FleetConsoleUpdate
     public static IReadOnlyList<string> ExeFileNames { get; } =
         [ExeName(ReleaseAssets.Product), ExeName(ReleaseAssets.LegacyProduct)];
 
-    public static ReleaseSourceOptions Options(UpdateConfig config)
+    /// <summary>
+    /// Options for one variant. The default overload keeps the installed variant (see
+    /// <see cref="InstalledVariant"/>), so a full install never drifts onto light zips.
+    /// </summary>
+    public static ReleaseSourceOptions Options(UpdateConfig config, FleetVariant variant)
     {
         ArgumentNullException.ThrowIfNull(config);
         var tried = ReleaseAssets.RepositoriesToTry(config.Repository);
@@ -27,10 +31,20 @@ public static class FleetConsoleUpdate
             AuthorizationToken = string.IsNullOrWhiteSpace(config.Token) ? null : config.Token,
         };
         options.FallbackRepositories.AddRange(tried.Skip(1));
-        options.ExecutableAssetNames.AddRange(ReleaseAssets.ConsoleZipNames);
+        options.ExecutableAssetNames.AddRange(ReleaseAssets.ConsoleZipNamesFor(variant));
         options.ProbeExecutableNames.AddRange(ExeFileNames);
         return options;
     }
+
+    public static ReleaseSourceOptions Options(UpdateConfig config) =>
+        Options(config, InstalledVariant());
+
+    /// <summary>
+    /// Which package this installation came from. The installer records it in
+    /// <see cref="ReleaseAssets.VariantMarkerFileName"/> next to the executable.
+    /// </summary>
+    public static FleetVariant InstalledVariant() =>
+        ReleaseAssets.InstalledVariant(Environment.ProcessPath);
 
     public static ReleaseVersion InstalledVersion()
     {

@@ -5,10 +5,13 @@
 .DESCRIPTION
     Produces the assets that `deploy\install.ps1` and `mining-fleet update` look for.
     Each payload is published under both the new name and the xmrig-fleet alias so a
-    console or agent that has not moved yet can still find its zip:
+    console or agent that has not moved yet can still find its zip, and in two variants:
+    self-contained (full) plus framework-dependent (light, needs the .NET runtime):
 
         mining-fleet-win-x64.zip / xmrig-fleet-win-x64.zip
+        mining-fleet-win-x64-light.zip / xmrig-fleet-win-x64-light.zip
         mining-fleet-agent-win-x64.zip / xmrig-fleet-agent-win-x64.zip
+        mining-fleet-agent-win-x64-light.zip / xmrig-fleet-agent-win-x64-light.zip
 
     The version comes from the tag: -Version v1.1.0 stamps 1.1.0 into both binaries, so the
     console can compare the release tag against its own assembly version.
@@ -72,38 +75,52 @@ $targets = @(
 )
 
 foreach ($t in $targets) {
-    $stage = Join-Path $OutputPath $t.Name
-    Write-Host "==> Publishing $($t.Name) $number ($Runtime)" -ForegroundColor Cyan
+    # Two builds of the same sources: self-contained (full) and framework-dependent
+    # (light, needs the .NET runtime on the machine). PublishTrimmed=false on the
+    # light build: a trimmed framework-dependent single-file publish fails the build
+    # (NETSDK1102), and the runtime is shared anyway so trimming saves nothing.
+    $variants = @(
+        @{ Suffix = ''; SelfContained = 'true'; ExtraArgs = @() }
+        @{ Suffix = '-light'; SelfContained = 'false'; ExtraArgs = @('-p:PublishTrimmed=false') }
+    )
 
-    & dotnet publish (Join-Path $root $t.Project) `
-        -c Release -r $Runtime --self-contained true `
-        -p:Version=$number -p:AssemblyVersion=$number -p:FileVersion=$number `
-        -o $stage
-    if ($LASTEXITCODE -ne 0) { throw "publish failed for $($t.Name)" }
+    foreach ($v in $variants) {
+        $stage = Join-Path $OutputPath ($t.Name + $v.Suffix)
+        Write-Host "==> Publishing $($t.Name)$($v.Suffix) $number ($Runtime)" -ForegroundColor Cyan
 
-    # Debug symbols are useful locally but only bloat what every operator downloads.
-    Get-ChildItem $stage -Filter *.pdb -Recurse | Remove-Item -Force
+        & dotnet publish (Join-Path $root $t.Project) `
+            -c Release -r $Runtime --self-contained $v.SelfContained `
+            -p:Version=$number -p:AssemblyVersion=$number -p:FileVersion=$number `
+            @($v.ExtraArgs) `
+            -o $stage
+        if ($LASTEXITCODE -ne 0) { throw "publish failed for $($t.Name)$($v.Suffix)" }
 
-    if ($t.ShimFrom -and $Runtime -like 'win-*') {
-        $from = Join-Path $stage $t.ShimFrom
-        $to = Join-Path $stage $t.ShimTo
-        if (-not (Test-Path $from)) { throw "Published console is missing $($t.ShimFrom)." }
-        Copy-Item $from $to -Force
-    }
+        # Debug symbols are useful locally but only bloat what every operator downloads.
+        Get-ChildItem $stage -Filter *.pdb -Recurse | Remove-Item -Force
 
-    # appsettings.json ships as a template; a real token is written by install-agent.ps1.
-    $primary = Join-Path $OutputPath $t.Assets[0]
-    Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $primary -Force
-    Remove-Item $stage -Recurse -Force
+        if ($t.ShimFrom -and $Runtime -like 'win-*') {
+            $from = Join-Path $stage $t.ShimFrom
+            $to = Join-Path $stage $t.ShimTo
+            if (-not (Test-Path $from)) { throw "Published console is missing $($t.ShimFrom)." }
+            Copy-Item $from $to -Force
+        }
 
-    foreach ($asset in $t.Assets) {
-        $archive = Join-Path $OutputPath $asset
-        if ($archive -ne $primary) { Copy-Item $primary $archive -Force }
-        $size = [math]::Round((Get-Item $archive).Length / 1MB, 1)
-        Write-Host "    $asset  $size MB"
-        # The self-update path requires a checksum sidecar next to every payload.
-        $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
-        Set-Content -LiteralPath "$archive.sha256" -Value "$hash  $asset" -Encoding ascii
+        $lightSuffix = $v.Suffix
+        $names = @($t.Assets | ForEach-Object { $_ -replace '\.zip$', "$lightSuffix.zip" })
+        # appsettings.json ships as a template; a real token is written by install-agent.ps1.
+        $primary = Join-Path $OutputPath $names[0]
+        Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $primary -Force
+        Remove-Item $stage -Recurse -Force
+
+        foreach ($asset in $names) {
+            $archive = Join-Path $OutputPath $asset
+            if ($archive -ne $primary) { Copy-Item $primary $archive -Force }
+            $size = [math]::Round((Get-Item $archive).Length / 1MB, 1)
+            Write-Host "    $asset  $size MB"
+            # The self-update path requires a checksum sidecar next to every payload.
+            $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+            Set-Content -LiteralPath "$archive.sha256" -Value "$hash  $asset" -Encoding ascii
+        }
     }
 }
 

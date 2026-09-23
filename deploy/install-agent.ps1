@@ -20,6 +20,8 @@
 
 .EXAMPLE
     .\install-agent.ps1 -Token "my-fleet-secret" -SourcePath .\publish
+.EXAMPLE
+    .\install-agent.ps1 -Token "my-fleet-secret" -Variant light
 #>
 [CmdletBinding()]
 param(
@@ -38,7 +40,13 @@ param(
     # Loopback port the agent starts xmrig's own HTTP API on.
     [int]$XmrigApiPort = 47801,
 
-    [string]$ServiceName = 'mining-fleet-agent'
+    [string]$ServiceName = 'mining-fleet-agent',
+
+    # auto picks the small framework-dependent zip when the .NET runtime is
+    # installed; full and light force one variant. Also settable for the
+    # iex form via $env:MINING_FLEET_VARIANT (or the older XMRIG_FLEET_VARIANT).
+    [ValidateSet('auto', 'full', 'light')]
+    [string]$Variant = $(if ($env:MINING_FLEET_VARIANT) { $env:MINING_FLEET_VARIANT } elseif ($env:XMRIG_FLEET_VARIANT) { $env:XMRIG_FLEET_VARIANT } else { 'auto' })
 )
 
 $ErrorActionPreference = 'Stop'
@@ -57,12 +65,58 @@ if ([string]::IsNullOrWhiteSpace($InstallPath)) {
     $InstallPath = if (Test-Path $legacyPath) { $legacyPath } else { $modernPath }
 }
 
+# Major of the .NET runtime the light package targets. Bump together with the apps'
+# target framework. Console apps, so Microsoft.NETCore.App qualifies; a machine with
+# Microsoft.WindowsDesktop.App has the base runtime too. Same rule as
+# ReleaseAssets.IsCompatibleRuntimeLine in the source.
+$DotNetMajor = '10'
+$VariantMarker = '.mining-fleet-variant'
+
+function Test-DotNetRuntimeLine {
+    param([string]$Line, [string]$Major = $DotNetMajor)
+    return [bool]($Line -match "^Microsoft\.(NETCore|WindowsDesktop)\.App\s+$Major\.")
+}
+
+function Test-DotNetRuntime {
+    try {
+        $runtimes = & dotnet --list-runtimes 2>$null
+    } catch {
+        return $false
+    }
+    foreach ($line in @($runtimes)) {
+        if (Test-DotNetRuntimeLine -Line ([string]$line)) { return $true }
+    }
+    return $false
+}
+
+function Select-FleetAsset {
+    param(
+        [string]$Variant = 'auto',
+        [bool]$HasRuntime = $false,
+        [Parameter(Mandatory = $true)][string[]]$FullNames,
+        [Parameter(Mandatory = $true)][string[]]$LightNames
+    )
+    if ($Variant -eq 'light') { return $LightNames }
+    if ($Variant -eq 'full') { return $FullNames }
+    if ($HasRuntime) { return $LightNames }
+    return $FullNames
+}
+
+$arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64' -or $env:PROCESSOR_ARCHITEW6432 -eq 'ARM64') { 'arm64' } else { 'x64' }
+$agentFullNames = @("mining-fleet-agent-win-$arch.zip", "xmrig-fleet-agent-win-$arch.zip")
+$agentLightNames = @("mining-fleet-agent-win-$arch-light.zip", "xmrig-fleet-agent-win-$arch-light.zip")
+$hasRuntime = Test-DotNetRuntime
+if ($Variant -eq 'light' -and -not $hasRuntime) {
+    throw 'The light package needs the .NET runtime, which was not found. Install the runtime or use -Variant full.'
+}
+$agentAssetNames = Select-FleetAsset -Variant $Variant -HasRuntime $hasRuntime -FullNames $agentFullNames -LightNames $agentLightNames
+$variantName = if ($agentAssetNames[0] -like '*-light.zip') { 'light' } else { 'full' }
+
 # No payload given: pull the agent for this platform out of the newest release.
 if ([string]::IsNullOrWhiteSpace($SourcePath)) {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     $repo = if ($env:MINING_FLEET_REPO) { $env:MINING_FLEET_REPO } elseif ($env:XMRIG_FLEET_REPO) { $env:XMRIG_FLEET_REPO } else { 'XYphrodite/mining-fleet' }
-    $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64' -or $env:PROCESSOR_ARCHITEW6432 -eq 'ARM64') { 'arm64' } else { 'x64' }
-    $assetNames = @("mining-fleet-agent-win-$arch.zip", "xmrig-fleet-agent-win-$arch.zip")
+    $assetNames = $agentAssetNames
 
     Write-Host "==> Fetching agent from the newest release of $repo"
     $release = Invoke-RestMethod "https://api.github.com/repos/$repo/releases/latest" -Headers @{ 'User-Agent' = 'mining-fleet-agent-installer' } -TimeoutSec 30
@@ -122,6 +176,10 @@ $legacyExe = Join-Path $InstallPath 'xmrig-fleet-agent.exe'
 if ((Test-Path $modernExe) -and -not (Test-Path $legacyExe)) { Copy-Item $modernExe $legacyExe }
 if ((Test-Path $legacyExe) -and -not (Test-Path $modernExe)) { Copy-Item $legacyExe $modernExe }
 $exeName = if (Test-Path $modernExe) { 'mining-fleet-agent.exe' } else { 'xmrig-fleet-agent.exe' }
+# Records which kind of build this is, so the agent self-update keeps the variant.
+# With -SourcePath the payload is whatever was published: -Variant then only records
+# what the next self-update should fetch, and the two converge on the next update.
+[IO.File]::WriteAllText((Join-Path $InstallPath $VariantMarker), $variantName)
 
 $settings = [ordered]@{
     Agent = [ordered]@{
