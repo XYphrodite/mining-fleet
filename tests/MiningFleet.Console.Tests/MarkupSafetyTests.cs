@@ -110,6 +110,24 @@ public sealed class MarkupSafetyTests
         AnsiConsole.MarkupLine(UiHelpers.Escape(text));
     }
 
+    [Theory]
+    [InlineData(52.0, 56.0, "[green]52[/]/[green]56[/]")]
+    [InlineData(87.0, null, "[red]87[/]/-")]
+    [InlineData(null, 46.0, "-/[green]46[/]")]
+    public void TemperaturePair_shows_cpu_first_then_gpu(double? cpu, double? gpu, string expected)
+    {
+        var hardware = new MiningFleet.Contracts.HardwareDto
+        {
+            CpuTemperatureC = cpu,
+            Gpus = gpu is null
+                ? []
+                : [new MiningFleet.Contracts.GpuDto("card", gpu, null, null, null, null)],
+        };
+
+        Assert.Equal(expected, UiHelpers.TemperaturePair(hardware));
+        Assert.Equal("[grey]-[/]", UiHelpers.TemperaturePair(null));
+    }
+
     [Fact]
     public void StatusBadge_renders_a_watchdog_notice_containing_markup()
     {

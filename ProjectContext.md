@@ -542,6 +542,17 @@ mining-fleet/
 ## Development Status
 
 ### Implemented & Verified Live ✅
+
+- [x] **DST coexistence profile on mks68i7rtx (2026-09-25).** CPU stayed in the same
+      process with its huge pages; max CPU budget 50% (six threads) and 85 C thermal ceiling.
+      Removed only DST from the GPU pause rule, retaining Ollama; started CR29 at 90 W with
+      Windows GPU scheduling priority Idle and lolMiner `screen=-1`, `tstop=85`, `tstart=80`.
+      Measured both mining together: CPU 4.76 kH/s at 81 C, GPU 4.13 g/s at 64 C.
+      `deploy/watch-game-mining.ps1 -Once` ran successfully on the node. Original node settings
+      and lolMiner config are backed up under `C:\mining\fleet-game`. This does **not** verify
+      the FPS target. With explicit operator approval, `MiningFleet-GameGovernor` was installed
+      as a SYSTEM startup task; its background cycle was verified at 80 C CPU / 62 C GPU.
+      The helper directory allows writes only to Administrators and SYSTEM.
 - [x] **Fleet checked from the actual operator machine, Xeon, on 2026-09-13.** Its three
       enabled IPv4 endpoints returned full snapshots. Dev was idle and had no stored autostart;
       autostart was enabled and `/miner/start` launched XMRig, followed by accepted shares.
@@ -751,6 +762,34 @@ mining-fleet/
       giving a start command
 
 ### Implemented, Not Yet Verified Live ⏳
+
+- [ ] **Running-game context in dashboard and CLI state.** The governor atomically writes
+      `game-mining-status.json` beside the agent; `/status` exposes it as optional `GameMining`.
+      `StatusBadge` appends `DST · reduced` without replacing mining/no-API/watchdog state and
+      shows measured presented FPS or `FPS unavailable`. Missing, invalid, future-dated or
+      older-than-90-second telemetry is ignored; an inactive game clears the label. Game names
+      are markup-escaped. Requires the updated helper, agent and console; v1.17.22 does not
+      support this field. All 24 targeted game-status/markup tests passed on an isolated remote
+      SDK build; the PowerShell publisher passed active/FPS/exit and atomic-replacement checks.
+      The v1.17.23 release candidate also passed all 219 tests on Windows. The helper is bundled
+      in both agent variants. Full/light packages use isolated intermediate outputs and
+      validate the generated runtime configuration; both console variants passed a remote
+      version-command smoke check. Not yet deployed to the live dashboard.
+
+- [ ] **FPS feedback and reboot recovery for the DST governor.** `deploy/watch-game-mining.ps1` samples
+      PresentMon, reduces CPU thread budget after two samples below 30 FPS, raises it slowly
+      with FPS/temperature headroom, and maintains GPU Idle priority / 90 W while DST runs.
+      No FPS data or lost ETW events hold the limits, not permission to increase them.
+      Baseline before GPU mining was 28.1 presented FPS; subsequent captures returned no
+      reliable game frames, so 30 FPS with both miners is not established. GPU thermal safety
+      still pauses compute at 85 C. The startup task is installed and running, but the response
+      to actual low/high FPS, restoration after game exit and a cold boot are not yet verified.
+- [ ] **Watchdog stall coverage.** Beyond a dead process, a running miner whose API
+      answers but reports no hashrate for five minutes is restarted (pool reconnects
+      and fresh starts read zero briefly, nothing healthy stays silent that long). A
+      miner whose API does not answer is held, never restarted blind — it may be
+      hand-started. A failed `RestartAsync` keeps the wish instead of reading as a
+      stop. Unit-tested and built; no stuck miner has been watched live yet
 - [ ] **A reserved core surviving a reboot.** Everything up to that is verified (see above): the
       setting is stored on the node, and the service re-applies it within six seconds of the mask
       being taken away. What nobody has watched is `mks68i7rtx` coming back from a cold boot with
@@ -1016,8 +1055,8 @@ mining-fleet/
 ## Document Information
 
 **Document Version**: v1.2
-**Last Updated**: 2026-09-22
-**Product Version**: 1.17.0
+**Last Updated**: 2026-09-25
+**Product Version**: 1.17.23
 **Status**: Active
 **Repository**: `c:\Repos\xmrig-fleet` (local folder; branch `master`), published at
 [github.com/XYphrodite/mining-fleet](https://github.com/XYphrodite/mining-fleet)

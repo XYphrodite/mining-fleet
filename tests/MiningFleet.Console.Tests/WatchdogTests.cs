@@ -73,6 +73,38 @@ public sealed class WatchdogTests
     }
 
     [Fact]
+    public void A_silent_miner_accrues_and_a_healthy_one_clears()
+    {
+        // Running, seen, silent: the clock starts and holds its first-zero time.
+        var zero = WatchdogPolicy.NextZeroSince(true, apiOk: true, hashrate: 0, zeroSince: null, now: Start);
+        Assert.Equal(Start, zero);
+        Assert.Equal(Start, WatchdogPolicy.NextZeroSince(true, true, 0, zero, Start.AddMinutes(3)));
+
+        // Not stuck yet at three minutes: a reconnect and a fresh start both read zero.
+        Assert.False(WatchdogPolicy.IsStuck(zero, Start.AddMinutes(3)));
+        Assert.True(WatchdogPolicy.IsStuck(zero, Start.AddMinutes(5)));
+
+        // Anything else clears it: stopped, blind, or hashing again.
+        Assert.Null(WatchdogPolicy.NextZeroSince(false, true, 0, zero, Start.AddMinutes(6)));
+        Assert.Null(WatchdogPolicy.NextZeroSince(true, false, null, zero, Start.AddMinutes(6)));
+        Assert.Null(WatchdogPolicy.NextZeroSince(true, true, null, zero, Start.AddMinutes(6)));
+        Assert.Null(WatchdogPolicy.NextZeroSince(true, true, 1454.9, zero, Start.AddMinutes(6)));
+    }
+
+    [Fact]
+    public void A_blind_miner_is_held_not_restarted()
+    {
+        // Null API on a running miner means the agent cannot see it — possibly one started
+        // by hand — so no clock ever starts, however long it stays null.
+        DateTimeOffset? zero = null;
+        for (var m = 0; m <= 30; m++)
+            zero = WatchdogPolicy.NextZeroSince(true, apiOk: false, hashrate: null, zero, Start.AddMinutes(m));
+
+        Assert.Null(zero);
+        Assert.False(WatchdogPolicy.IsStuck(zero, Start.AddMinutes(30)));
+    }
+
+    [Fact]
     public void An_old_miner_json_wants_nothing()
     {
         using var dir = new TempDirectory();

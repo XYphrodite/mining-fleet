@@ -106,6 +106,20 @@ public sealed record NodeSnapshotDto(AgentInfoDto Agent, MinerStatusDto Miner, H
 
     /// <summary>Null on an agent too old to mine on the GPU, which is how the console tells them apart.</summary>
     public GpuMinerStatusDto? GpuMiner { get; init; }
+
+    /// <summary>Fresh observations from the optional game governor; null on older agents.</summary>
+    public GameMiningStatusDto? GameMining { get; init; }
+}
+
+/// <summary>A running game remains visible even when miners keep working alongside it.</summary>
+public sealed record GameMiningStatusDto
+{
+    public DateTimeOffset ObservedAt { get; init; }
+    public bool Active { get; init; }
+    public string GameName { get; init; } = "";
+    public bool Reduced { get; init; }
+    /// <summary>Presented FPS; null means no reliable sample, never zero or an inferred value.</summary>
+    public double? Fps { get; init; }
 }
 
 public sealed record CommandResultDto(bool Ok, string Message)

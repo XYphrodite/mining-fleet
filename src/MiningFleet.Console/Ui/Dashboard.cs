@@ -120,7 +120,7 @@ public sealed class Dashboard
                 new Markup(UiHelpers.HugePages(miner)),
                 new Markup(UiHelpers.MsrBadge(miner)),
                 new Markup(hardware?.CpuLoadPercent is { } load ? $"{load:0}%" : "[grey]-[/]"),
-                new Markup(UiHelpers.Temperature(hardware?.CpuTemperatureC ?? hardware?.Gpus.FirstOrDefault()?.TemperatureC)),
+                new Markup(UiHelpers.TemperaturePair(hardware)),
                 new Markup(state.PowerWatts > 0
                     ? $"{state.PowerWatts:0}{(hardware?.PowerIsMeasured == true ? "" : "[grey]~[/]")}"
                     : "[grey]-[/]"),

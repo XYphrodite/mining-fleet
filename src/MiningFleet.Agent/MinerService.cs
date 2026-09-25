@@ -183,9 +183,15 @@ public sealed class MinerService : IDisposable
 
     public async Task<CommandResultDto> RestartAsync(CancellationToken ct)
     {
+        // A restart means keep it running, so a failed one must not read as a stop: the stop
+        // below clears the wish and only a start that worked sets it back.
+        var wanted = _config.Current.MinerWanted;
         await StopAsync(ct);
         await Task.Delay(TimeSpan.FromMilliseconds(500), ct);
-        return await StartAsync(ct);
+        var result = await StartAsync(ct);
+        if (!result.Ok && wanted == true)
+            _config.Update(new MinerConfigDto { MinerWanted = true });
+        return result;
     }
 
     public async Task<MinerStatusDto> GetStatusAsync(CancellationToken ct)

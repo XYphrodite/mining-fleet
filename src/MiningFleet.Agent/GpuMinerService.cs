@@ -207,9 +207,13 @@ public sealed class GpuMinerService : IDisposable
 
     public async Task<CommandResultDto> RestartAsync(CancellationToken ct)
     {
+        var wanted = _config.Current.GpuWanted;
         await StopAsync(ct);
         await Task.Delay(TimeSpan.FromMilliseconds(500), ct);
-        return await StartAsync(ct);
+        var result = await StartAsync(ct);
+        if (!result.Ok && wanted == true)
+            _config.Update(new MinerConfigDto { GpuWanted = true });
+        return result;
     }
 
     public async Task<GpuMinerStatusDto> GetStatusAsync(CancellationToken ct)

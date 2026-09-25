@@ -35,7 +35,34 @@ public static class UiHelpers
         _ => $"[green]{celsius:0}C[/]",
     };
 
-    public static string StatusBadge(NodeState state) => state switch
+    /// <summary>
+    /// Both temperatures in one dashboard cell, CPU first: "52/56". The single value used
+    /// to be CPU with the card as a fallback, which hid the card everywhere PawnIO works.
+    /// </summary>
+    public static string TemperaturePair(MiningFleet.Contracts.HardwareDto? hardware)
+    {
+        var cpu = hardware?.CpuTemperatureC;
+        var gpu = hardware?.Gpus.FirstOrDefault()?.TemperatureC;
+        if (cpu is null && gpu is null) return "[grey]-[/]";
+        return $"{Short(cpu)}/{Short(gpu)}";
+
+        static string Short(double? v) => v is null ? "-" : $"[{Colour(v.Value)}]{v:0}[/]";
+        static string Colour(double v) => v >= 85 ? "red" : v >= 75 ? "yellow" : "green";
+    }
+
+    public static string StatusBadge(NodeState state)
+    {
+        var badge = MinerStatusBadge(state);
+        if (!state.Online || state.Snapshot?.GameMining is not { Active: true } game) return badge;
+
+        var reduced = game.Reduced ? " · reduced" : "";
+        var fps = game.Fps is { } value && double.IsFinite(value) && value >= 0
+            ? $"FPS {value:0.#}"
+            : "FPS unavailable";
+        return $"{badge} [yellow]· {Escape(game.GameName)}{reduced}[/]\n[grey]{fps}[/]";
+    }
+
+    private static string MinerStatusBadge(NodeState state) => state switch
     {
         { Online: false } => $"[red]offline[/] [grey]{Escape(state.Error)}[/]",
         // A miner this agent did not start keeps its own API token, so hashrate is unreadable

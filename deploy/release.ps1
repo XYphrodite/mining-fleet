@@ -41,6 +41,13 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path "$PSScriptRoot\..").Path
 $number = $Version.TrimStart('v')
+$OutputPath = [IO.Path]::GetFullPath($OutputPath)
+# Recursive cleanup must stay in a dedicated output folder, never the checkout or its sources.
+$allowedRoots = @((Join-Path $root 'release'), (Join-Path $root 'publish'))
+if (-not ($allowedRoots | Where-Object {
+    $OutputPath.Equals($_, [StringComparison]::OrdinalIgnoreCase) -or
+    $OutputPath.StartsWith($_ + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)
+})) { throw 'OutputPath must be inside the repository release or publish directory.' }
 
 # A running agent or console locks its own executable and fails the build. Only processes
 # started out of this repository can lock the build output, so an installed agent service
@@ -86,14 +93,29 @@ foreach ($t in $targets) {
 
     foreach ($v in $variants) {
         $stage = Join-Path $OutputPath ($t.Name + $v.Suffix)
+        # Keep full/light intermediate outputs apart: a reused single-file bundle can
+        # otherwise retain the runtime from the preceding self-contained publish.
+        $artifacts = Join-Path $OutputPath ('.build\' + $t.Name + $v.Suffix)
         Write-Host "==> Publishing $($t.Name)$($v.Suffix) $number ($Runtime)" -ForegroundColor Cyan
 
         & dotnet publish (Join-Path $root $t.Project) `
-            -c Release -r $Runtime --self-contained $v.SelfContained `
+            -c Release -r $Runtime "-p:SelfContained=$($v.SelfContained)" `
+            --artifacts-path $artifacts `
+            -m:1 -p:UseSharedCompilation=false `
             -p:Version=$number -p:AssemblyVersion=$number -p:FileVersion=$number `
             @($v.ExtraArgs) `
             -o $stage
         if ($LASTEXITCODE -ne 0) { throw "publish failed for $($t.Name)$($v.Suffix)" }
+
+        # Check the generated runtime config even when it is embedded in a single file.
+        $runtimeConfig = Get-ChildItem (Join-Path $artifacts 'bin') -Recurse -Filter "$($t.Name).runtimeconfig.json" |
+            Select-Object -First 1
+        if (-not $runtimeConfig) { throw "Missing runtime config for $($t.Name)$($v.Suffix)" }
+        $runtimeOptions = (Get-Content $runtimeConfig.FullName -Raw | ConvertFrom-Json).runtimeOptions
+        $isSelfContained = @($runtimeOptions.includedFrameworks).Where({ $_ }).Count -gt 0
+        if ($isSelfContained -ne ($v.SelfContained -eq 'true')) {
+            throw "Wrong runtime packaging for $($t.Name)$($v.Suffix)"
+        }
 
         # Debug symbols are useful locally but only bloat what every operator downloads.
         Get-ChildItem $stage -Filter *.pdb -Recurse | Remove-Item -Force
@@ -110,6 +132,10 @@ foreach ($t in $targets) {
         # appsettings.json ships as a template; a real token is written by install-agent.ps1.
         $primary = Join-Path $OutputPath $names[0]
         Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $primary -Force
+        $stage = [IO.Path]::GetFullPath($stage)
+        if (-not $stage.StartsWith($OutputPath + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Release stage escaped the output directory.'
+        }
         Remove-Item $stage -Recurse -Force
 
         foreach ($asset in $names) {

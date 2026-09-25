@@ -1,13 +1,20 @@
+using MiningFleet.Contracts;
+
 namespace MiningFleet.Agent;
 
 /// <summary>
 /// Restarts a wanted miner that is not running, on both CPU and GPU.
 ///
-/// Wanted means a start that worked and no stop since — whoever asked for either. A crash
+/// Wanted means a start that worked and no stop since — whatever asked for either. A crash
 /// changes nothing, so a killed process comes back; an operator's stop, a pause and a
 /// throttle to zero all say otherwise, and each owns its own flag, which this service
 /// checks first and never touches. That ordering is the whole contract: the watchdog
 /// brings back what died, never what was put down.
+///
+/// A running miner that reports no hashrate for five minutes is restarted too: a pool
+/// reconnect and a fresh start both read zero briefly, but nothing healthy stays silent
+/// that long. A miner whose API does not answer is left alone — restarting blind could
+/// kill one started by hand.
 /// </summary>
 public sealed class MinerWatchdogService : BackgroundService
 {
@@ -21,8 +28,10 @@ public sealed class MinerWatchdogService : BackgroundService
 
     private int _cpuFailures;
     private DateTimeOffset? _cpuLastAttempt;
+    private DateTimeOffset? _cpuZeroSince;
     private int _gpuFailures;
     private DateTimeOffset? _gpuLastAttempt;
+    private DateTimeOffset? _gpuZeroSince;
 
     /// <summary>Why a wanted miner is still down, for the status DTOs. Null when nothing is owed.</summary>
     public string? CpuNotice { get; private set; }
@@ -76,36 +85,90 @@ public sealed class MinerWatchdogService : BackgroundService
 
     private async Task WatchCpuAsync(DateTimeOffset now, CancellationToken ct)
     {
-        if (_miner.RunningPid() is not null)
+        var config = _config.Current;
+        if (config.MinerStoppedByThrottle == true || config.MinerStoppedByPause == true ||
+            config.MinerWanted != true || CpuHeld(config))
+        {
+            CpuNotice = null;
+            _cpuZeroSince = null;
+            return;
+        }
+
+        if (_miner.RunningPid() is null)
+        {
+            _cpuZeroSince = null;
+            if (CpuHeld(config)) return;
+            await StartCpuAsync(now, ct);
+            return;
+        }
+
+        CpuNotice = null;
+
+        MinerStatusDto status;
+        try
+        {
+            status = await _miner.GetStatusAsync(ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // An unreadable status is not a stuck miner. Hold rather than guess.
+            _log.LogDebug(ex, "Miner watchdog could not read xmrig status");
+            _cpuZeroSince = null;
+            return;
+        }
+
+        _cpuZeroSince = WatchdogPolicy.NextZeroSince(
+            running: true,
+            apiOk: status.ApiError is null,
+            hashrate: status.Hashrate60s ?? status.Hashrate10s,
+            zeroSince: _cpuZeroSince,
+            now: now);
+
+        if (!WatchdogPolicy.IsStuck(_cpuZeroSince, now))
         {
             _cpuFailures = 0;
             _cpuLastAttempt = null;
-            CpuNotice = null;
             return;
         }
+        if (CpuHeld(config)) return;
 
-        var config = _config.Current;
-        if (config.MinerStoppedByThrottle == true || config.MinerStoppedByPause == true)
-            return;
-        if (config.MinerWanted != true)
+        if (!WatchdogPolicy.IsDue(_cpuFailures + 1, _cpuLastAttempt, now))
         {
-            CpuNotice = null;
+            CpuNotice = WatchdogPolicy.DescribeStuck(now - _cpuZeroSince!.Value);
             return;
         }
 
+        var result = await _miner.RestartAsync(ct);
+        _cpuLastAttempt = DateTimeOffset.UtcNow;
+        if (result.Ok)
+        {
+            _cpuZeroSince = null;
+            _log.LogInformation("Watchdog restarted stuck xmrig: {Message}", result.Message);
+            return;
+        }
+
+        _cpuFailures++;
+        CpuNotice = WatchdogPolicy.Describe(_cpuFailures, _cpuLastAttempt.Value + WatchdogPolicy.Delay(_cpuFailures + 1), result.Message);
+        _log.LogWarning("Watchdog could not restart stuck xmrig: {Message}", result.Message);
+    }
+
+    /// <summary>Held by someone else's rule: a busy machine or a throttle at zero.</summary>
+    private bool CpuHeld(MinerConfigDto config)
+    {
         // Somebody is at the machine: starting now would buy one flap before the pause
         // service stops it again, at the cost of a RandomX dataset build each time. An
         // unreadable observation holds the start rather than guessing, like the pause
         // service does with its own decision.
         if (config.PauseWhile is { } rule && rule.NamesACondition
             && UsageProbe.Observe(rule) is not { Busy: false })
-            return;
+            return true;
 
         // The throttle at zero owns the miner as well; its flag lands a tick later at most.
-        var throttle = _throttle.Status();
-        if (throttle is { Enabled: true, Level: 0 })
-            return;
+        return _throttle.Status() is { Enabled: true, Level: 0 };
+    }
 
+    private async Task StartCpuAsync(DateTimeOffset now, CancellationToken ct)
+    {
         if (!WatchdogPolicy.IsDue(_cpuFailures + 1, _cpuLastAttempt, now))
             return;
 
@@ -126,28 +189,83 @@ public sealed class MinerWatchdogService : BackgroundService
 
     private async Task WatchGpuAsync(DateTimeOffset now, CancellationToken ct)
     {
-        if (_gpu.RunningPid() is not null)
+        var config = _config.Current;
+        if (config.GpuStoppedByPause == true || config.GpuWanted != true || GpuHeld(config))
+        {
+            GpuNotice = null;
+            _gpuZeroSince = null;
+            return;
+        }
+
+        if (_gpu.RunningPid() is null)
+        {
+            _gpuZeroSince = null;
+            if (GpuHeld(config)) return;
+            await StartGpuAsync(now, ct);
+            return;
+        }
+
+        GpuNotice = null;
+
+        GpuMinerStatusDto status;
+        try
+        {
+            status = await _gpu.GetStatusAsync(ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.LogDebug(ex, "Miner watchdog could not read lolMiner status");
+            _gpuZeroSince = null;
+            return;
+        }
+
+        // A readable hashrate is the sight: blind means hold, zero accrues, anything else
+        // clears. A fresh card reads nothing while it builds its dataset, which is far
+        // shorter than the stuck window.
+        _gpuZeroSince = WatchdogPolicy.NextZeroSince(
+            running: true,
+            apiOk: status.Hashrate is not null,
+            hashrate: status.Hashrate,
+            zeroSince: _gpuZeroSince,
+            now: now);
+
+        if (!WatchdogPolicy.IsStuck(_gpuZeroSince, now))
         {
             _gpuFailures = 0;
             _gpuLastAttempt = null;
-            GpuNotice = null;
             return;
         }
+        if (GpuHeld(config)) return;
 
-        var config = _config.Current;
-        if (config.GpuStoppedByPause == true)
-            return;
-        if (config.GpuWanted != true)
+        if (!WatchdogPolicy.IsDue(_gpuFailures + 1, _gpuLastAttempt, now))
         {
-            GpuNotice = null;
+            GpuNotice = WatchdogPolicy.DescribeStuck(now - _gpuZeroSince!.Value);
             return;
         }
 
-        var pause = config.GpuMiner?.PauseWhile;
-        if (pause is not null && pause.NamesACondition
-            && UsageProbe.Observe(pause) is not { Busy: false })
+        var result = await _gpu.RestartAsync(ct);
+        _gpuLastAttempt = DateTimeOffset.UtcNow;
+        if (result.Ok)
+        {
+            _gpuZeroSince = null;
+            _log.LogInformation("Watchdog restarted the stuck GPU miner: {Message}", result.Message);
             return;
+        }
 
+        _gpuFailures++;
+        GpuNotice = WatchdogPolicy.Describe(_gpuFailures, _gpuLastAttempt.Value + WatchdogPolicy.Delay(_gpuFailures + 1), result.Message);
+        _log.LogWarning("Watchdog could not restart the stuck GPU miner: {Message}", result.Message);
+    }
+
+    private bool GpuHeld(MinerConfigDto config)
+    {
+        var pause = config.GpuMiner?.PauseWhile;
+        return pause is not null && pause.NamesACondition
+            && UsageProbe.Observe(pause) is not { Busy: false };
+    }
+
+    private async Task StartGpuAsync(DateTimeOffset now, CancellationToken ct)
+    {
         if (!WatchdogPolicy.IsDue(_gpuFailures + 1, _gpuLastAttempt, now))
             return;
 

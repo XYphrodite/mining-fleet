@@ -125,6 +125,7 @@ api.MapGet("/status", async (MinerService miner, HardwareService hw, ThrottleSer
         Throttle = throttle.Status(),
         MonitorNotice = monitor.Notice,
         GpuMiner = gpuTask.Result with { WatchdogNotice = watchdog.GpuNotice },
+        GameMining = GameMiningStatusReader.Read(basePath, DateTimeOffset.UtcNow),
     };
 });
 

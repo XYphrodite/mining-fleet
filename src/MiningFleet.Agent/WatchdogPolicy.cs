@@ -33,4 +33,29 @@ public static class WatchdogPolicy
     /// </summary>
     public static string Describe(int failures, DateTimeOffset nextAttempt, string lastError) =>
         $"watchdog: restart {failures} failed ({lastError}), next try {nextAttempt:HH:mm:ss}";
+
+    /// <summary>
+    /// How long a running miner may report no hashrate before it counts as stuck. Short
+    /// enough to matter, long enough to ride out a pool reconnect and a fresh start: both
+    /// read zero for a minute or two with nothing wrong.
+    /// </summary>
+    public static readonly TimeSpan StuckAfter = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// Folds one observation into the stuck clock. A running miner whose API answers but
+    /// reports no hashrate keeps its first-zero time; anything else — stopped, blind API,
+    /// healthy rate — clears it. Null API means blind, not stuck: restarting a miner the
+    /// agent cannot see could kill one started by hand.
+    /// </summary>
+    public static DateTimeOffset? NextZeroSince(
+        bool running, bool apiOk, double? hashrate, DateTimeOffset? zeroSince, DateTimeOffset now) =>
+        running && apiOk && hashrate is 0 ? zeroSince ?? now : null;
+
+    /// <summary>Whether the stuck clock has run out.</summary>
+    public static bool IsStuck(DateTimeOffset? zeroSince, DateTimeOffset now) =>
+        zeroSince is not null && now - zeroSince.Value >= StuckAfter;
+
+    /// <summary>One line for the status DTOs when a restart is for a stall, not a death.</summary>
+    public static string DescribeStuck(TimeSpan silentFor) =>
+        $"watchdog: no hashrate for {(int)silentFor.TotalMinutes}m, restarting";
 }
