@@ -8,6 +8,9 @@ public sealed record NodeState(NodeConfig Node, NodeSnapshotDto? Snapshot, strin
     public bool Online => Snapshot is not null;
     public bool Mining => Snapshot?.Miner.Running == true;
 
+    /// <summary>Fleet activity includes either miner; Mining remains CPU-only for XMR economics.</summary>
+    public bool AnyMining => Mining || GpuMining;
+
     /// <summary>Preferred hashrate window: 60s is steady enough to read but still current.</summary>
     public double Hashrate => Snapshot?.Miner.Hashrate60s ?? Snapshot?.Miner.Hashrate10s ?? 0;
 

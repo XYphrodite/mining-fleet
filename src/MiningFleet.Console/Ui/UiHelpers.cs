@@ -69,6 +69,10 @@ public static class UiHelpers
         // until it is restarted through the fleet. Say so instead of showing a blank rate.
         { Mining: true, Hashrate: 0, Snapshot.Miner.ApiError: not null } => "[yellow]mining (no api)[/]",
         { Mining: true } => "[green]mining[/]",
+        // A CPU failure must not hide a working GPU, or lose its own diagnostic.
+        { GpuMining: true, Snapshot.Miner.WatchdogNotice: { Length: > 0 } notice } =>
+            $"[green]mining (GPU)[/]\n[yellow]CPU: {Escape(notice)}[/]",
+        { GpuMining: true } => "[green]mining (GPU)[/]",
         // A wanted miner the watchdog cannot bring back is idle with a reason, not plain
         // idle: the notice names the failure and the next attempt. It carries miner output,
         // so it goes through Escape like every other text the app did not author.

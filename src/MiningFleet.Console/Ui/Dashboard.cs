@@ -140,7 +140,7 @@ public sealed class Dashboard
         }
 
         var online = states.Count(s => s.Online);
-        var mining = states.Count(s => s.Mining);
+        var mining = states.Count(s => s.AnyMining);
 
         var summary = new Grid().AddColumn().AddColumn().AddColumn();
         summary.AddRow(

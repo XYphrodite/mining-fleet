@@ -137,7 +137,7 @@ public static class Cli
 
         AnsiConsole.Write(table);
         AnsiConsole.MarkupLine(
-            $"[grey]{states.Count(s => s.Mining)} mining, {states.Count(s => s.Online)} online, {states.Count} total, " +
+            $"[grey]{states.Count(s => s.AnyMining)} mining, {states.Count(s => s.Online)} online, {states.Count} total, " +
             $"{Economics.FormatHashrate(states.Where(s => s.Mining).Sum(s => s.Hashrate))} total[/]");
 
         // Non-zero exit when something is wrong, so a scheduled task can alert on it.

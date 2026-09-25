@@ -761,6 +761,15 @@ mining-fleet/
       and confirmed live by the operator: a miner came back up on its own with nobody
       giving a start command
 
+- [x] **GPU-only activity in fleet state (1.17.24).** Dashboard and CLI show `mining (GPU)`
+      when only the GPU miner runs, and count such nodes in the fleet mining total through
+      `NodeState.AnyMining`. CPU watchdog diagnostics remain visible alongside GPU activity.
+      The CPU-specific `Mining` flag and XMR economics retain their existing meaning.
+      All 229 tests passed remotely. The released console candidate was run against live
+      `re-7lqd67ahcm0r` (CPU stopped, GPU running) and `mks68i7rtx`: it showed `mining (GPU)`
+      and counted both nodes as mining while retaining DST context. Full/light packages
+      passed version, checksum and runtime-packaging checks.
+
 ### Implemented, Not Yet Verified Live ⏳
 
 - [ ] **Running-game context in dashboard and CLI state.** The governor atomically writes
@@ -1056,7 +1065,7 @@ mining-fleet/
 
 **Document Version**: v1.2
 **Last Updated**: 2026-09-25
-**Product Version**: 1.17.23
+**Product Version**: 1.17.24
 **Status**: Active
 **Repository**: `c:\Repos\xmrig-fleet` (local folder; branch `master`), published at
 [github.com/XYphrodite/mining-fleet](https://github.com/XYphrodite/mining-fleet)
