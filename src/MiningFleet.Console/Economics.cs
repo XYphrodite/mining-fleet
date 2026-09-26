@@ -8,32 +8,26 @@ public sealed record FleetEconomics(
     double? XmrPerDay,
     double? RevenuePerDay,
     double? ProfitPerDay,
-    /// <summary>Electricity spent per mined XMR, which is also the break-even XMR price.</summary>
     double? CostPerXmr,
-    string Currency);
+    string Currency,
+    double TotalGpuHashrate,
+    double? XtmPerDay,
+    double? GpuRevenuePerDay);
 
 public static class Economics
 {
-    /// <summary>
-    /// Income is estimated from network difficulty: your share of the network hashrate
-    /// times the daily block reward. It is an expectation, not a measurement, so the
-    /// real payout swings around it.
-    /// </summary>
+    private const double XtmPerGsPerDay = 87.5; // benchmark: 4 g/s ~350 XTM => 87.5 per g/s (from 49 RUB per 4g/s at 0.14 RUB)
+
     public static FleetEconomics Calculate(
         IEnumerable<NodeState> nodes,
         FleetConfig config,
         PoolNetworkStats? network,
-        double? price)
+        double? price,
+        double? xtmPrice = null)
     {
         var list = nodes.ToList();
         var hashrate = list.Where(n => n.Mining).Sum(n => n.Hashrate);
-
-        // Idle nodes still burn power, but only mining nodes are charged here: the machines
-        // would be on anyway, so what mining costs is the draw while it runs.
         var watts = list.Where(n => n.Mining).Sum(n => n.PowerWatts);
-
-        // Summed per node, not from the fleet total: each machine can sit on its own tariff,
-        // so one average rate would misprice every rig that is not on it.
         var costPerDay = list.Where(n => n.Mining).Sum(n => DailyCost(n, config));
 
         double? xmrPerDay = null;
@@ -49,6 +43,10 @@ public static class Economics
         var profitPerDay = revenuePerDay is not null ? revenuePerDay - costPerDay : null;
         var costPerXmr = xmrPerDay is > 0 ? costPerDay / xmrPerDay : null;
 
+        var gpuHashrate = list.Where(n => n.GpuMining).Sum(n => n.GpuHashrate);
+        double? xtmPerDay = gpuHashrate > 0 ? gpuHashrate * XtmPerGsPerDay : null;
+        var gpuRevenuePerDay = xtmPerDay is not null && xtmPrice is not null ? xtmPerDay * xtmPrice : null;
+
         return new FleetEconomics(
             hashrate,
             watts,
@@ -57,10 +55,12 @@ public static class Economics
             revenuePerDay,
             profitPerDay,
             costPerXmr,
-            config.Electricity.Currency);
+            config.Electricity.Currency,
+            gpuHashrate,
+            xtmPerDay,
+            gpuRevenuePerDay);
     }
 
-    /// <summary>What one node costs to run for 24 hours at its own tariff.</summary>
     public static double DailyCost(NodeState node, FleetConfig config) =>
         node.PowerWatts / 1000.0 * 24.0 * config.PricePerKwhFor(node.Node);
 
@@ -72,6 +72,8 @@ public static class Economics
         > 0 => $"{hashesPerSecond:0} H/s",
         _ => "-",
     };
+
+    public static string FormatGpuHashrate(double hash) => hash > 0 ? $"{hash:0.00} g/s" : "-";
 
     public static string FormatDuration(double seconds)
     {

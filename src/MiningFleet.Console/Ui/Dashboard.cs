@@ -18,6 +18,7 @@ public sealed class Dashboard
 
     private PoolNetworkStats? _network;
     private double? _price;
+    private double? _xtmPrice;
     private MoneyFormat? _money;
     private DateTimeOffset _marketFetchedAt = DateTimeOffset.MinValue;
 
@@ -49,7 +50,7 @@ public sealed class Dashboard
                 {
                     await RefreshMarketAsync(ct);
                     var states = await _fleet.PollAsync(ct);
-                    var economics = Economics.Calculate(states, _config, _network, _price);
+                    var economics = Economics.Calculate(states, _config, _network, _price, _xtmPrice);
 
                     ctx.UpdateTarget(Compose(states, economics));
                     ctx.Refresh();
@@ -66,9 +67,11 @@ public sealed class Dashboard
 
         var networkTask = _market.GetNetworkStatsAsync(ct);
         var priceTask = _market.GetPriceAsync(ct);
-        await Task.WhenAll(networkTask, priceTask);
+        var xtmPriceTask = _market.GetXtmPriceAsync(ct);
+        await Task.WhenAll(networkTask, priceTask, xtmPriceTask);
         _network = networkTask.Result ?? _network;
         _price = priceTask.Result ?? _price;
+        _xtmPrice = xtmPriceTask.Result ?? _xtmPrice;
         _money = await _market.GetMoneyFormatAsync(ct);
     }
 
@@ -153,6 +156,15 @@ public sealed class Dashboard
                 ? $"{xmr:0.00000} XMR  {money.Markup(economics.RevenuePerDay)}"
                 : "[grey]needs pool data[/]"),
             Cell("Profit/day", money.Signed(economics.ProfitPerDay)));
+        if (economics.TotalGpuHashrate > 0)
+        {
+            summary.AddRow(
+                Cell("GPU", $"[aqua]{Economics.FormatGpuHashrate(economics.TotalGpuHashrate)}[/]"),
+                Cell("XTM/day", economics.XtmPerDay is { } xtm
+                    ? $"{xtm:0} XTM  {money.Markup(economics.GpuRevenuePerDay)}"
+                    : "[grey]-[/]"),
+                Cell("GPU shares", states.Where(x=>x.GpuMining).Sum(x=>x.Gpu?.AcceptedShares??0) + "/" + states.Where(x=>x.GpuMining).Sum(x=> (x.Gpu?.AcceptedShares??0)+(x.Gpu?.RejectedShares??0)+(x.Gpu?.StaleShares??0))));
+        }
 
         var footer = new Markup(
             $"[grey]price[/] {money.Markup(_price)}   " +

@@ -267,5 +267,15 @@ public sealed class MarketService : IDisposable
     private static DateTimeOffset? UnixMilliseconds(double? value) =>
         value is null or 0 ? null : DateTimeOffset.FromUnixTimeMilliseconds((long)value.Value);
 
+    public async Task<double?> GetXtmPriceAsync(CancellationToken ct)
+    {
+        var pool = await GetPoolStatsAsync(ct);
+        if (pool is null) return null;
+        var market = Path(pool.Value, "market_xtm");
+        var currency = _config.Electricity.Currency?.ToLowerInvariant() ?? "usd";
+        var price = Number(market, $"price_{currency}") ?? Number(market, "price_usd");
+        return price;
+    }
+
     public void Dispose() => _http.Dispose();
 }
