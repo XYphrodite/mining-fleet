@@ -29,8 +29,8 @@ public static class XtmIncomePanel
                 var age = Math.Max(0, (now - income.Day!.End).TotalMinutes);
                 status = $"{age:0}m ago";
                 if (income.IsStale(now)) status += " [yellow]STALE[/]";
-                else if (basis is null && !row.ConfigUnverified) status += " / need 24h history";
-                else status += $" / {basis.Hours}h mean";
+                else if (basis is not null) status += $" / {basis.Hours}h mean";
+                else if (!row.ConfigUnverified) status += " / need 24h history";
             }
             if (row.ConfigUnverified) status += " [yellow]config unverified[/]";
             table.AddRow(UiHelpers.Escape(row.Nodes), accrued, forecast, status);

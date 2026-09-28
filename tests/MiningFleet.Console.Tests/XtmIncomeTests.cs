@@ -162,6 +162,19 @@ public sealed class XtmIncomeTests
     }
 
     [Fact]
+    public void Unverified_account_keeps_accruals_without_forecast_or_rendering_failure()
+    {
+        var console = new TestConsole();
+        console.Profile.Width = 200;
+        var account = XtmAccount.From("taric29.luckypool.io:3111", "wallet")!;
+        console.Write(XtmIncomePanel.Render([new("offline", account, Parse(Wallet()), true)], Now));
+        Assert.Contains("config unverified", console.Output);
+        Assert.Contains("111.78", console.Output);
+        Assert.DoesNotContain("163.50", console.Output);
+        Assert.DoesNotContain("need 24h history", console.Output);
+    }
+
+    [Fact]
     public void Panel_escapes_names_and_labels_stale_data_without_forecasting_it()
     {
         var income = Parse(Wallet())!;
