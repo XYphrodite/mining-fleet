@@ -110,8 +110,6 @@ public sealed class Dashboard : IDisposable
             }
             if (_xtmAccounts.TryGetValue(key, out var account))
                 accounts.Add((state.Node.Name, account, unverified));
-            else if (state.Gpu is not null || unverified)
-                rows.Add(new(state.Node.Name, null, null, unverified));
         }
         // Group BEFORE requesting or rendering: two cards on one wallet are one income stream.
         foreach (var group in accounts.GroupBy(a => a.Account))
@@ -197,15 +195,16 @@ public sealed class Dashboard : IDisposable
             Cell("Draw", $"{economics.TotalWatts:0} W"));
         summary.AddRow(
             Cell("Power cost/day", money.Markup(economics.CostPerDay)),
-            Cell("Income/day", economics.XmrPerDay is { } xmr
+            Cell("XMR income/day", economics.XmrPerDay is { } xmr
                 ? $"{xmr:0.00000} XMR  {money.Markup(economics.RevenuePerDay)}"
                 : "[grey]needs pool data[/]"),
-            Cell("Profit/day", money.Signed(economics.ProfitPerDay)));
+            Cell("XMR - power/day", money.Signed(economics.ProfitPerDay)));
         if (economics.TotalGpuHashrate > 0)
         {
             summary.AddRow(
                 Cell("GPU", $"[aqua]{Economics.FormatGpuHashrate(economics.TotalGpuHashrate)}[/]"),
-                Cell("XTM", "see pool wallet income below"),
+                Cell("XTM", _xtmIncome.Any(row => row.Account is not null)
+                    ? "see pool wallet income below" : "no supported wallet data"),
                 Cell("GPU shares", states.Where(x=>x.GpuMining).Sum(x=>x.Gpu?.AcceptedShares??0) + "/" + states.Where(x=>x.GpuMining).Sum(x=> (x.Gpu?.AcceptedShares??0)+(x.Gpu?.RejectedShares??0)+(x.Gpu?.StaleShares??0))));
         }
 
@@ -216,7 +215,9 @@ public sealed class Dashboard : IDisposable
 
         return new Rows(
             table,
-            new Panel(summary).Header("[bold]Totals[/]").Border(BoxBorder.Rounded).BorderColor(Color.Grey35).Expand(),
+            new Panel(new Rows(summary, new Markup(
+                "[grey]XMR - power = XMR income minus the displayed power cost. XTM income is accounted for separately.[/]")))
+                .Header("[bold]Totals[/]").Border(BoxBorder.Rounded).BorderColor(Color.Grey35).Expand(),
             XtmIncomePanel.Render(_xtmIncome, DateTimeOffset.UtcNow),
             footer);
     }

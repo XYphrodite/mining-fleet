@@ -772,6 +772,12 @@ mining-fleet/
 
 ### Implemented, Not Yet Verified Live ⏳
 
+- [x] **Dashboard income display cleanup (2026-09-28).** XTM rows require a known
+      supported wallet, while pool failures and unverified settings for known wallets remain
+      visible. Empty XTM tables disappear. Totals names the XMR income and the arithmetic
+      XMR-minus-displayed-power balance explicitly, with a note that XTM is accounted for
+      separately; it no longer labels that partial balance as fleet profit.
+
 - [x] **LuckyPool C29 XTM accruals and forecast (2026-09-28).** Dashboard reads
       `rewardStats` with the pool's `coinUnits`, displaying trailing 24h accruals separately
       from a 24/48/72h daily mean forecast. Forecast requires at least a full day of history
@@ -780,8 +786,8 @@ mining-fleet/
       missing data stays unknown, failed reads retain their original age, and stale (>10m)
       or unverified-account data cannot produce a forecast. Removed the fixed 87.5 XTM/g/s/day
       benchmark. API history plus observations in the dashboard session establish coverage;
-      there is no new persistent wallet log. Other pools are explicitly unsupported in this
-      dashboard table; the existing Kryptex payout view in Economics is unchanged.
+      there is no new persistent wallet log. The dashboard table includes supported wallets
+      only; the existing Kryptex payout view in Economics is unchanged.
 
 - [ ] **Running-game context in dashboard and CLI state.** The governor atomically writes
       `game-mining-status.json` beside the agent; `/status` exposes it as optional `GameMining`.

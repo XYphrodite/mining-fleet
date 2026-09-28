@@ -175,6 +175,42 @@ public sealed class XtmIncomeTests
     }
 
     [Fact]
+    public void Unrelated_nodes_do_not_obscure_a_shared_wallet()
+    {
+        var console = new TestConsole();
+        console.Profile.Width = 200;
+        var account = XtmAccount.From("taric29.luckypool.io:3111", "wallet")!;
+        console.Write(XtmIncomePanel.Render([
+            new("desktop-ib88isg", null, null),
+            new("HOME-PC", null, null, true),
+            new("3060, 4060, paused-card", account, Parse(Wallet()))
+        ], Now));
+        Assert.DoesNotContain("desktop-ib88isg", console.Output);
+        Assert.DoesNotContain("HOME-PC", console.Output);
+        Assert.Contains("3060, 4060, paused-card", console.Output);
+        Assert.Contains("111.78", console.Output);
+    }
+
+    [Fact]
+    public void No_known_wallet_means_no_empty_xtm_table()
+    {
+        var console = new TestConsole();
+        console.Write(XtmIncomePanel.Render([new("offline", null, null, true)], Now));
+        Assert.True(string.IsNullOrWhiteSpace(console.Output));
+    }
+
+    [Fact]
+    public void Known_wallet_with_failed_pool_read_still_shows_the_failure()
+    {
+        var console = new TestConsole();
+        console.Profile.Width = 200;
+        var account = XtmAccount.From("taric29.luckypool.io:3111", "wallet")!;
+        console.Write(XtmIncomePanel.Render([new("mining-card", account, null)], Now));
+        Assert.Contains("mining-card", console.Output);
+        Assert.Contains("pool unavailable", console.Output);
+    }
+
+    [Fact]
     public void Panel_escapes_names_and_labels_stale_data_without_forecasting_it()
     {
         var income = Parse(Wallet())!;
