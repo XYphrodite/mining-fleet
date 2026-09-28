@@ -49,7 +49,10 @@ foreach ($archive in $archives | Where-Object Name -Like 'mining-fleet*') {
     $exe = Join-Path $stage $exeName
     $number = $Version.TrimStart('v')
     $actual = [Diagnostics.FileVersionInfo]::GetVersionInfo($exe).FileVersion
-    if ([version]$actual -ne [version]"$number.0") { throw "Wrong binary version: $actual" }
+    $fileVersion = [version]$actual
+    if ($fileVersion.ToString(3) -ne $number -or $fileVersion.Revision -notin @(-1, 0)) {
+        throw "Wrong binary version: $actual"
+    }
     if ($isAgent) {
         $settings = Get-Content -LiteralPath (Join-Path $stage 'appsettings.json') -Raw | ConvertFrom-Json
         if ($settings.Agent.Token -ne 'CHANGE-ME') { throw 'Agent token template is not safe to ship.' }
