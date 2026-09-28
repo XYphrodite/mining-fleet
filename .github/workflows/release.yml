@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: mining-fleet
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: mining-fleet
+      - uses: actions/checkout@v4
+        with:
+          repository: XYphrodite/self-update-kit
+          ref: 4a78bc9df66f26d7bdc3c0572e95131c2d1c3440
+          path: self-update-kit
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Test release sources
+        run: dotnet test tests/MiningFleet.Console.Tests/MiningFleet.Console.Tests.csproj --configuration Release --logger "trx;LogFileName=release.trx"
+      - name: Package and verify release
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: ./deploy/ci-release.ps1 -Version $env:RELEASE_TAG
+      - name: Upload release draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $assets = @((Get-ChildItem release -File -Filter '*.zip').FullName) + @((Get-ChildItem release -File -Filter '*.sha256').FullName)
+          if ($assets.Count -ne 16) { throw 'Expected eight archives and eight checksums.' }
+          gh release create $env:RELEASE_TAG @assets --verify-tag --draft --title $env:RELEASE_TAG --notes-file "deploy/releases/$env:RELEASE_TAG.md"
+          if ($LASTEXITCODE -ne 0) { throw 'Release upload failed.' }
+      - name: Publish verified release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $release = gh release view $env:RELEASE_TAG --json assets,isDraft | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or !$release.isDraft -or $release.assets.Count -ne 16) { throw 'Incomplete release draft.' }
+          gh release edit $env:RELEASE_TAG --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { throw 'Release publication failed.' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: release-test-results
+          path: mining-fleet/tests/**/TestResults/*.trx
