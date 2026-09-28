@@ -45,7 +45,7 @@ if (System.Console.IsOutputRedirected || System.Console.IsInputRedirected)
     return 2;
 }
 
-var dashboard = new Dashboard(config, fleet, market);
+using var dashboard = new Dashboard(config, fleet, market);
 var nodes = new NodesScreen(config, fleet);
 var miner = new MinerScreen(config, fleet);
 var hardware = new HardwareScreen(config, fleet);

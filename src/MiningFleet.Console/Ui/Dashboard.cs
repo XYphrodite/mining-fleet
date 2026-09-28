@@ -8,17 +8,20 @@ namespace MiningFleet.Console.Ui;
 /// interval until a key is pressed. Market data is fetched far less often than node status
 /// because the pool and price APIs are rate-limited.
 /// </summary>
-public sealed class Dashboard
+public sealed class Dashboard : IDisposable
 {
     private static readonly TimeSpan MarketRefresh = TimeSpan.FromMinutes(2);
 
     private readonly FleetConfig _config;
     private readonly FleetService _fleet;
     private readonly MarketService _market;
+    private readonly XtmIncomeService _xtm = new();
 
     private PoolNetworkStats? _network;
     private double? _price;
-    private double? _xtmPrice;
+    private readonly Dictionary<string, XtmAccount> _xtmAccounts = new();
+    private IReadOnlyList<XtmIncomeRow> _xtmIncome = [];
+    private DateTimeOffset _xtmFetchedAt = DateTimeOffset.MinValue;
     private MoneyFormat? _money;
     private DateTimeOffset _marketFetchedAt = DateTimeOffset.MinValue;
 
@@ -40,6 +43,7 @@ public sealed class Dashboard
         }
 
         DrainKeys();
+        _xtmFetchedAt = DateTimeOffset.MinValue;
         var interval = TimeSpan.FromSeconds(Math.Max(1, _config.PollIntervalSeconds));
 
         await AnsiConsole.Live(new Rows())
@@ -50,7 +54,8 @@ public sealed class Dashboard
                 {
                     await RefreshMarketAsync(ct);
                     var states = await _fleet.PollAsync(ct);
-                    var economics = Economics.Calculate(states, _config, _network, _price, _xtmPrice);
+                    await RefreshXtmAsync(states, _xtm, ct);
+                    var economics = Economics.Calculate(states, _config, _network, _price);
 
                     ctx.UpdateTarget(Compose(states, economics));
                     ctx.Refresh();
@@ -67,12 +72,52 @@ public sealed class Dashboard
 
         var networkTask = _market.GetNetworkStatsAsync(ct);
         var priceTask = _market.GetPriceAsync(ct);
-        var xtmPriceTask = _market.GetXtmPriceAsync(ct);
-        await Task.WhenAll(networkTask, priceTask, xtmPriceTask);
+        await Task.WhenAll(networkTask, priceTask);
         _network = networkTask.Result ?? _network;
         _price = priceTask.Result ?? _price;
-        _xtmPrice = xtmPriceTask.Result ?? _xtmPrice;
         _money = await _market.GetMoneyFormatAsync(ct);
+    }
+
+    private async Task RefreshXtmAsync(IReadOnlyList<NodeState> states, XtmIncomeService service,
+        CancellationToken ct)
+    {
+        if (DateTimeOffset.UtcNow - _xtmFetchedAt < MarketRefresh) return;
+        _xtmFetchedAt = DateTimeOffset.UtcNow;
+        var accounts = new List<(string Node, XtmAccount Account, bool Unverified)>();
+        var rows = new List<XtmIncomeRow>();
+        foreach (var state in states)
+        {
+            // Read paused cards too: stopping a miner does not erase the wallet's earnings.
+            var key = state.Node.Endpoint;
+            var unverified = true;
+            if (state.Online)
+            {
+                using var client = _fleet.CreateClient(state.Node);
+                try
+                {
+                    var settings = await client.GetConfigAsync(ct);
+                    if (settings is not null)
+                    {
+                        unverified = false;
+                        var gpu = settings.GpuMiner;
+                        var target = XtmAccount.From(gpu?.PoolUrl, gpu?.User);
+                        if (target is not null) _xtmAccounts[key] = target;
+                        else _xtmAccounts.Remove(key);
+                    }
+                }
+                catch (Exception ex) when (ex is HttpRequestException or System.Text.Json.JsonException
+                    || ex is OperationCanceledException && !ct.IsCancellationRequested) { }
+            }
+            if (_xtmAccounts.TryGetValue(key, out var account))
+                accounts.Add((state.Node.Name, account, unverified));
+            else if (state.Gpu is not null || unverified)
+                rows.Add(new(state.Node.Name, null, null, unverified));
+        }
+        // Group BEFORE requesting or rendering: two cards on one wallet are one income stream.
+        foreach (var group in accounts.GroupBy(a => a.Account))
+            rows.Add(new(string.Join(", ", group.Select(a => a.Node)), group.Key,
+                await service.GetAsync(group.Key, ct), group.Any(a => a.Unverified)));
+        _xtmIncome = rows;
     }
 
     private IRenderable Compose(IReadOnlyList<NodeState> states, FleetEconomics economics)
@@ -160,9 +205,7 @@ public sealed class Dashboard
         {
             summary.AddRow(
                 Cell("GPU", $"[aqua]{Economics.FormatGpuHashrate(economics.TotalGpuHashrate)}[/]"),
-                Cell("XTM/day", economics.XtmPerDay is { } xtm
-                    ? $"{xtm:0} XTM  {money.Markup(economics.GpuRevenuePerDay)}"
-                    : "[grey]-[/]"),
+                Cell("XTM", "see pool wallet income below"),
                 Cell("GPU shares", states.Where(x=>x.GpuMining).Sum(x=>x.Gpu?.AcceptedShares??0) + "/" + states.Where(x=>x.GpuMining).Sum(x=> (x.Gpu?.AcceptedShares??0)+(x.Gpu?.RejectedShares??0)+(x.Gpu?.StaleShares??0))));
         }
 
@@ -174,6 +217,7 @@ public sealed class Dashboard
         return new Rows(
             table,
             new Panel(summary).Header("[bold]Totals[/]").Border(BoxBorder.Rounded).BorderColor(Color.Grey35).Expand(),
+            XtmIncomePanel.Render(_xtmIncome, DateTimeOffset.UtcNow),
             footer);
     }
 
@@ -200,4 +244,6 @@ public sealed class Dashboard
     {
         while (System.Console.KeyAvailable) System.Console.ReadKey(intercept: true);
     }
+
+    public void Dispose() => _xtm.Dispose();
 }

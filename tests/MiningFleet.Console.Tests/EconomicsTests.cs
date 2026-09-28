@@ -142,7 +142,7 @@ public sealed class EconomicsTests
         Assert.Equal(143, node.PowerWatts);
     }
     [Fact]
-    public void Gpu_hashrate_and_xtm_income_are_summed_separately()
+    public void Gpu_hashrate_is_separate_from_cpu_income()
     {
         var config = Fleet();
         static NodeState GpuMining(string name, double ghs)
@@ -162,11 +162,11 @@ public sealed class EconomicsTests
         var b = GpuMining("rig2", 4.0);
         config.Nodes.Add(a.Node); config.Nodes.Add(b.Node);
 
-        var economics = Economics.Calculate([a, b], config, network: null, price: null, xtmPrice: 0.001665);
+        var economics = Economics.Calculate([a, b], config, network: null, price: null);
 
         Assert.Equal(8.0, economics.TotalGpuHashrate, precision: 6);
-        Assert.Equal(700.0, economics.XtmPerDay!.Value, precision: 6);
-        Assert.Equal(700.0 * 0.001665, economics.GpuRevenuePerDay!.Value, precision: 6);
+        Assert.Null(economics.XmrPerDay);
+        Assert.Null(economics.RevenuePerDay);
     }
 
 }

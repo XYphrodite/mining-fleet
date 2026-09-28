@@ -772,6 +772,17 @@ mining-fleet/
 
 ### Implemented, Not Yet Verified Live ⏳
 
+- [x] **LuckyPool C29 XTM accruals and forecast (2026-09-28).** Dashboard reads
+      `rewardStats` with the pool's `coinUnits`, displaying trailing 24h accruals separately
+      from a 24/48/72h daily mean forecast. Forecast requires at least a full day of history
+      and assumes unchanged activity/pool conditions; downtime remains in the mean. Wallets
+      are deduplicated across cards and regional endpoints. Paused cards retain accounting;
+      missing data stays unknown, failed reads retain their original age, and stale (>10m)
+      or unverified-account data cannot produce a forecast. Removed the fixed 87.5 XTM/g/s/day
+      benchmark. API history plus observations in the dashboard session establish coverage;
+      there is no new persistent wallet log. Other pools are explicitly unsupported in this
+      dashboard table; the existing Kryptex payout view in Economics is unchanged.
+
 - [ ] **Running-game context in dashboard and CLI state.** The governor atomically writes
       `game-mining-status.json` beside the agent; `/status` exposes it as optional `GameMining`.
       `StatusBadge` appends `DST · reduced` without replacing mining/no-API/watchdog state and
@@ -1064,7 +1075,7 @@ mining-fleet/
 ## Document Information
 
 **Document Version**: v1.2
-**Last Updated**: 2026-09-25
+**Last Updated**: 2026-09-28
 **Product Version**: 1.17.24
 **Status**: Active
 **Repository**: `c:\Repos\xmrig-fleet` (local folder; branch `master`), published at
