@@ -55,7 +55,11 @@ foreach ($archive in $archives | Where-Object Name -Like 'mining-fleet*') {
     }
     if ($isAgent) {
         $settings = Get-Content -LiteralPath (Join-Path $stage 'appsettings.json') -Raw | ConvertFrom-Json
-        if ($settings.Agent.Token -ne 'CHANGE-ME') { throw 'Agent token template is not safe to ship.' }
+        $template = Get-Content -LiteralPath (Join-Path $root 'src\MiningFleet.Agent\appsettings.json') -Raw | ConvertFrom-Json
+        if ($template.Agent.Token -notin @('CHANGE-ME', 'CHANGE-ME-shared-secret') -or
+            $settings.Agent.Token -cne $template.Agent.Token) {
+            throw 'Agent token does not match the checked-in placeholder.'
+        }
     }
     else {
         $versionOutput = & $exe version
