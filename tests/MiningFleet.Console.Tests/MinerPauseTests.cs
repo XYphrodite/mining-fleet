@@ -114,10 +114,9 @@ public sealed class MinerPauseTests
             PauseWhile = new GpuPauseConfig { ProcessNames = ["cs2"], QuietSeconds = 300 },
         });
 
-        // Replaced whole, not merged: a node told to stand down for a game must not inherit a
-        // port nobody asked it to watch.
-        Assert.Equal(["cs2"], xeon!.Processes);
-        Assert.Null(xeon.TcpPort);
+        // Uniform fleet: fleet rule wins, per-node pause is ignored.
+        Assert.Equal(11434, xeon!.TcpPort);
+        Assert.Empty(xeon.Processes);
 
         Assert.Equal(11434, config.MinerPauseFor(new NodeConfig { Name = "rig" })!.TcpPort);
     }
@@ -125,11 +124,48 @@ public sealed class MinerPauseTests
     [Fact]
     public void A_fleet_with_no_rule_sends_none()
     {
-        // A rig nobody sits at should never stop mining, and an empty block must not become a
-        // rule that stands a node down with nothing able to wake it.
-        Assert.Null(new FleetConfig().MinerPauseFor(new NodeConfig { Name = "rig" }));
+        // An empty block must not become a rule that stands a node down with nothing able to wake it.
+        // The fleet now ships uniform defaults (cs2/dota2), so "no rule" means explicitly cleared.
+        var cleared = new FleetConfig { PauseWhile = null };
+        cleared.GpuMiner.PauseWhile = null;
+        Assert.Null(cleared.MinerPauseFor(new NodeConfig { Name = "rig" }));
         Assert.Null(new FleetConfig { PauseWhile = new GpuPauseConfig { QuietSeconds = 300 } }
             .MinerPauseFor(new NodeConfig { Name = "rig" }));
+    }
+
+    [Fact]
+    public void Default_fleet_has_uniform_cs2_dota2_pause()
+    {
+        var def = new FleetConfig();
+        var cpu = def.MinerPauseFor(new NodeConfig { Name = "rig" });
+        var gpu = def.GpuMinerFor(new NodeConfig { Name = "rig" }).PauseWhile;
+        Assert.NotNull(cpu);
+        Assert.Contains("cs2", cpu!.Processes);
+        Assert.Contains("dota2", cpu.Processes);
+        Assert.Contains("deadlock", cpu.Processes);
+        Assert.Contains("r5apex", cpu.Processes);
+        // Minecraft runs as javaw (TLauncher and the official launcher both).
+        Assert.Contains("javaw", cpu.Processes);
+        Assert.Contains("Minecraft", cpu.Processes);
+        Assert.NotNull(gpu);
+        Assert.Contains("cs2", gpu!.Processes);
+        Assert.Contains("dota2", gpu.Processes);
+        Assert.Contains("deadlock", gpu.Processes);
+        Assert.Contains("r5apex", gpu.Processes);
+        Assert.Contains("javaw", gpu.Processes);
+        Assert.Contains("Minecraft", gpu.Processes);
+    }
+
+    [Fact]
+    public void Default_fleet_throttles_for_dst_instead_of_pausing()
+    {
+        var def = new FleetConfig();
+        var light = def.ThrottleWhileFor(new NodeConfig { Name = "rig" });
+        Assert.NotNull(light);
+        Assert.Contains("dontstarve_steam", light!.Processes, StringComparer.OrdinalIgnoreCase);
+        // DST must not be in heavy pause — heavy pause is full stop, light is 45% throttle
+        var heavy = def.MinerPauseFor(new NodeConfig { Name = "rig" });
+        Assert.DoesNotContain("dontstarve_steam", heavy!.Processes, StringComparer.OrdinalIgnoreCase);
     }
 
     [Fact]

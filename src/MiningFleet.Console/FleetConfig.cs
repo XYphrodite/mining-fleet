@@ -47,14 +47,25 @@ public sealed class FleetConfig
 
     /// <summary>
     /// Fleet-wide rule for stopping CPU mining while somebody is at the machine. Nodes override it.
+    /// Uniform across all nodes — cs2/dota2/deadlock/r5apex and Minecraft (javaw) pause CPU and
+    /// GPU mining fleet-wide. Minecraft has no dedicated image name: TLauncher and the official
+    /// launcher both run it as javaw.exe, so that is what the rule watches.
     /// </summary>
-    public GpuPauseConfig? PauseWhile { get; set; }
+    public GpuPauseConfig? PauseWhile { get; set; } = new() { ProcessNames = ["cs2", "dota2", "deadlock", "r5apex", "javaw", "Minecraft"], QuietSeconds = 300 };
+
+    /// <summary>
+    /// Fleet-wide rule for throttling (not stopping) CPU/GPU mining for light games like DST.
+    /// Held at ~45% CPU and throttled GPU while the process runs, restored after QuietSeconds.
+    /// </summary>
+    public GpuPauseConfig? ThrottleWhile { get; set; } = new() { ProcessNames = ["dontstarve_steam", "dontstarve"], QuietSeconds = 120 };
 
     /// <summary>
     /// Fleet-wide GPU mining defaults. Mostly a place to keep the pause rule and the pool login;
     /// the algorithm usually belongs on the node, because it is a property of the card.
+    /// Uniform pause rule across all nodes — any node hands its card to cs2/dota2/deadlock/r5apex
+    /// and Minecraft (javaw).
     /// </summary>
-    public GpuMinerConfig GpuMiner { get; set; } = new();
+    public GpuMinerConfig GpuMiner { get; set; } = new() { PauseWhile = new() { ProcessNames = ["cs2", "dota2", "deadlock", "r5apex", "javaw", "Minecraft"], QuietSeconds = 300 } };
 
     public List<NodeConfig> Nodes { get; set; } = [];
 
@@ -178,11 +189,14 @@ public sealed class FleetConfig
         (node.MaxCpuPercent ?? MaxCpuPercent, node.MaxCpuTemperatureC ?? MaxCpuTemperatureC);
 
     /// <summary>
-    /// When a node stops CPU mining for whoever is at it. Replaced whole by a node that names one
-    /// rather than merged field by field, for the reason the card's rule is: a condition a node did
-    /// not ask for is a node standing idle with nothing to explain it.
+    /// When a node stops CPU mining for whoever is at it. Fleet-wide uniform — every node uses
+    /// the fleet rule only, so all rigs pause for the same set (cs2/dota2/deadlock).
+    /// Per-node pause is ignored to keep the fleet identical.
     /// </summary>
-    public GpuPauseRuleDto? MinerPauseFor(NodeConfig node) => PauseRuleFor(node.PauseWhile ?? PauseWhile);
+    public GpuPauseRuleDto? MinerPauseFor(NodeConfig node) => PauseRuleFor(PauseWhile);
+
+    /// <summary>When a node throttles (not stops) CPU mining for light games like DST.</summary>
+    public GpuPauseRuleDto? ThrottleWhileFor(NodeConfig node) => PauseRuleFor(ThrottleWhile);
 
     /// <summary>
     /// What a node's graphics card should mine: the fleet's answer with that node's exceptions
@@ -205,7 +219,7 @@ public sealed class FleetConfig
             Password = own?.Password ?? GpuMiner.Password ?? "x",
             ApiPort = own?.ApiPort ?? GpuMiner.ApiPort ?? DefaultGpuApiPort,
             RunInInteractiveSession = own?.RunInInteractiveSession ?? GpuMiner.RunInInteractiveSession,
-            PauseWhile = PauseRuleFor(own?.PauseWhile ?? GpuMiner.PauseWhile),
+            PauseWhile = PauseRuleFor(GpuMiner.PauseWhile),
         };
     }
 
@@ -214,6 +228,24 @@ public sealed class FleetConfig
     /// so the two miners cannot collide on a node running both.
     /// </summary>
     public const int DefaultGpuApiPort = 47802;
+
+    private static GpuPauseConfig? MergePauseConfigs(GpuPauseConfig? fleet, GpuPauseConfig? node)
+    {
+        if (fleet is null) return node;
+        if (node is null) return fleet;
+        // Union: fleet provides uniform base, node adds any extra without dropping fleet entries.
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var n in fleet.ProcessNames ?? []) if (!string.IsNullOrWhiteSpace(n)) names.Add(n.Trim());
+        if (!string.IsNullOrWhiteSpace(fleet.ProcessName)) names.Add(fleet.ProcessName.Trim());
+        foreach (var n in node.ProcessNames ?? []) if (!string.IsNullOrWhiteSpace(n)) names.Add(n.Trim());
+        if (!string.IsNullOrWhiteSpace(node.ProcessName)) names.Add(node.ProcessName.Trim());
+        return new GpuPauseConfig
+        {
+            TcpPort = node.TcpPort ?? fleet.TcpPort,
+            ProcessNames = names.Count > 0 ? names.ToList() : null,
+            QuietSeconds = node.QuietSeconds ?? fleet.QuietSeconds,
+        };
+    }
 
     /// <summary>
     /// Converts a pause rule, or returns null when the rule names no condition — a block with only

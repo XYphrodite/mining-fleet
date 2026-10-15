@@ -123,6 +123,7 @@ public sealed class MinerConfigStore
                 MaxCpuTemperatureC = patch.MaxCpuTemperatureC ?? _current.MaxCpuTemperatureC,
                 MinerStoppedByThrottle = patch.MinerStoppedByThrottle ?? _current.MinerStoppedByThrottle,
                 PauseWhile = MergePauseRule(_current.PauseWhile, patch.PauseWhile),
+                ThrottleWhile = MergePauseRule(_current.ThrottleWhile, patch.ThrottleWhile),
                 MinerStoppedByPause = patch.MinerStoppedByPause ?? _current.MinerStoppedByPause,
                 GpuMiner = MergeGpuMiner(_current.GpuMiner, patch.GpuMiner),
                 GpuStoppedByPause = patch.GpuStoppedByPause ?? _current.GpuStoppedByPause,

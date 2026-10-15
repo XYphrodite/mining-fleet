@@ -770,6 +770,13 @@ mining-fleet/
       and counted both nodes as mining while retaining DST context. Full/light packages
       passed version, checksum and runtime-packaging checks.
 
+- [x] **Minecraft stands the fleet down (v1.17.28).** `javaw` and `Minecraft` join the uniform
+      heavy pause list (`cs2`, `dota2`, `deadlock`, `r5apex`) for both CPU and GPU mining.
+      Minecraft has no dedicated image name: TLauncher and the official launcher both run it
+      as `javaw.exe`. Verified live on `moscow-enjoyer` (Fabric 1.21.11 via TLauncher): the
+      GPU pause rule reported `javaw is running` while the game held the card. QuietSeconds
+      remains 300. A Java process that is not Minecraft will also pause mining.
+
 ### Implemented, Not Yet Verified Live ⏳
 
 - [x] **Dashboard income display cleanup (2026-09-28).** XTM rows require a known
@@ -1081,8 +1088,8 @@ mining-fleet/
 ## Document Information
 
 **Document Version**: v1.2
-**Last Updated**: 2026-09-28
-**Product Version**: 1.17.24
+**Last Updated**: 2026-10-15
+**Product Version**: 1.17.28
 **Status**: Active
 **Repository**: `c:\Repos\xmrig-fleet` (local folder; branch `master`), published at
 [github.com/XYphrodite/mining-fleet](https://github.com/XYphrodite/mining-fleet)

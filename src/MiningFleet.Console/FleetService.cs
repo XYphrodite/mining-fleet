@@ -142,6 +142,8 @@ public sealed class FleetService
                     MaxCpuPercent = maxCpu,
                     MaxCpuTemperatureC = maxTemp,
                     PauseWhile = _config.MinerPauseFor(node),
+                    ThrottleWhile = _config.ThrottleWhileFor(node),
+                    GpuMiner = _config.GpuMinerFor(node),
                 }, token);
             if (saved is null) return CommandResultDto.Failure("empty response");
 

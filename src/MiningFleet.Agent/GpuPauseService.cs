@@ -63,45 +63,35 @@ public sealed class GpuPauseService : BackgroundService
     {
         var config = _config.Current;
         var rule = config.GpuMiner?.PauseWhile;
+        var lightRule = config.ThrottleWhile;
 
+        // Heavy pause — cs2/dota2/deadlock: full stop
         if (rule is null || !rule.NamesACondition)
         {
-            // The second half is not redundant, for the same reason it is not in the throttle: a
-            // node whose miner this service paused, restarted into a config with no rule, would
-            // otherwise sit there not mining with nothing to explain it.
             if (_wasEnabled || config.GpuStoppedByPause == true) await StandDownAsync(ct);
-            return;
         }
-
-        _wasEnabled = true;
-
-        var busy = UsageProbe.Observe(rule);
-        if (busy is null)
+        else
         {
-            // An unreadable observation is not a quiet one. Resuming on a failed read would put
-            // the miner back onto a card somebody is waiting for, so the decision simply holds -
-            // the same three-way shape SystemLoadReader uses for a load sample it cannot trust.
-            return;
+            _wasEnabled = true;
+            var busy = UsageProbe.Observe(rule);
+            if (busy is null) { /* hold */ }
+            else if (!_rule.Update(busy.Value.Busy, busy.Value.Description, rule.QuietSeconds ?? 300, DateTimeOffset.UtcNow))
+            {
+                if (busy.Value.Busy) await MaybeThrottleAsync(ct);
+                else if (_throttled) await RestoreThrottleAsync(ct);
+                _miner.Notice = _rule.Paused ? _rule.Reason : _throttled ? $"GPU throttled to {ThrottledPowerLimitWatts}W (light load while {_rule.Reason})" : null;
+                if (_rule.Paused) { await HandleLightGpuThrottleAsync(null, ct); return; }
+                // fall through to light throttle check when not paused
+            }
+            else
+            {
+                if (_rule.Paused) { await PauseAsync(ct); return; }
+                else await ResumeAsync(ct);
+            }
         }
 
-        if (!_rule.Update(busy.Value.Busy, busy.Value.Description, rule.QuietSeconds ?? 300, DateTimeOffset.UtcNow))
-        {
-            // While busy but light load — throttle instead of full stop, keep mining at reduced power.
-            // This is the DST case: game is running but GPU load <80% means it is not heavy.
-            if (busy.Value.Busy)
-            {
-                await MaybeThrottleAsync(ct);
-            }
-            else if (_throttled)
-            {
-                await RestoreThrottleAsync(ct);
-            }
-            _miner.Notice = _rule.Paused ? _rule.Reason : _throttled ? $"GPU throttled to {ThrottledPowerLimitWatts}W (light load while {_rule.Reason})" : null;
-            return;
-        }
-
-        if (_rule.Paused) await PauseAsync(ct);
-        else await ResumeAsync(ct);
+        // Light throttle — DST: keep mining but at reduced power (throttle) instead of full stop
+        await HandleLightGpuThrottleAsync(lightRule, ct);
     }
 
     private async Task PauseAsync(CancellationToken ct)
@@ -265,6 +255,30 @@ public sealed class GpuPauseService : BackgroundService
         }
 
         _miner.Notice = null;
+    }
+
+    private readonly GpuPauseRule _lightGpuRule = new();
+    private async Task HandleLightGpuThrottleAsync(GpuPauseRuleDto? lightRule, CancellationToken ct)
+    {
+        if (lightRule is null || !lightRule.NamesACondition)
+        {
+            if (_lightGpuRule.Paused) _lightGpuRule.Clear(DateTimeOffset.UtcNow);
+            return;
+        }
+        var busy = UsageProbe.Observe(lightRule);
+        if (busy is null) return;
+        if (!_lightGpuRule.Update(busy.Value.Busy, busy.Value.Description, lightRule.QuietSeconds ?? 120, DateTimeOffset.UtcNow))
+        {
+            if (_lightGpuRule.Paused && !_rule.Paused) await MaybeThrottleAsync(ct);
+            else if (!_lightGpuRule.Paused && _throttled) await RestoreThrottleAsync(ct);
+            return;
+        }
+        if (_lightGpuRule.Paused)
+        {
+            if (_rule.Paused) return; // heavy pause wins
+            await MaybeThrottleAsync(ct);
+        }
+        else if (_throttled) await RestoreThrottleAsync(ct);
     }
 
 }

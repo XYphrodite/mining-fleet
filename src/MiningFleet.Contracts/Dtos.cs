@@ -187,6 +187,14 @@ public sealed record MinerConfigDto
     public GpuPauseRuleDto? PauseWhile { get; init; }
 
     /// <summary>
+    /// When to throttle CPU mining instead of stopping it — light games like DST that need
+    /// the machine to stay responsive but don't need the whole CPU. Held at 45% of full
+    /// speed while the process runs, restored after QuietSeconds of quiet.
+    /// Null means never, uniform fleet-wide.
+    /// </summary>
+    public GpuPauseRuleDto? ThrottleWhile { get; init; }
+
+    /// <summary>
     /// True when the CPU miner is stopped because <see cref="PauseWhile"/> matched, rather than
     /// because an operator stopped it or the throttle took it to zero.
     ///

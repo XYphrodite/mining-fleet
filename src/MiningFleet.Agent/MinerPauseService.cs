@@ -24,19 +24,24 @@ namespace MiningFleet.Agent;
 public sealed class MinerPauseService : BackgroundService
 {
     private static readonly TimeSpan Tick = TimeSpan.FromSeconds(2);
+    private const int LightThrottleLevel = 45;
 
     private readonly MinerConfigStore _config;
     private readonly MinerService _miner;
+    private readonly MinerCpuLimit _limit;
     private readonly ThrottleLog _journal;
     private readonly ILogger<MinerPauseService> _log;
     private readonly GpuPauseRule _rule = new();
+    private readonly GpuPauseRule _lightRule = new();
 
     private bool _wasEnabled;
+    private bool _lightThrottled;
 
-    public MinerPauseService(MinerConfigStore config, MinerService miner, ThrottleLog journal, ILogger<MinerPauseService> log)
+    public MinerPauseService(MinerConfigStore config, MinerService miner, MinerCpuLimit limit, ThrottleLog journal, ILogger<MinerPauseService> log)
     {
         _config = config;
         _miner = miner;
+        _limit = limit;
         _journal = journal;
         _log = log;
     }
@@ -64,33 +69,96 @@ public sealed class MinerPauseService : BackgroundService
     {
         var config = _config.Current;
         var rule = config.PauseWhile;
+        var lightRule = config.ThrottleWhile;
 
+        // Heavy pause (cs2/dota2/deadlock) — full stop, always wins over light throttle.
         if (rule is null || !rule.NamesACondition)
         {
-            // The second half is not redundant: a node this service stopped, restarted into a
-            // config with no rule, would otherwise sit idle with nothing anywhere to explain it.
             if (_wasEnabled || config.MinerStoppedByPause == true) await StandDownAsync(ct);
-            return;
         }
-
-        _wasEnabled = true;
-
-        var busy = UsageProbe.Observe(rule);
-        if (busy is null)
+        else
         {
-            // An unreadable observation is not a quiet one. The decision holds rather than
-            // guessing, the same three-way shape SystemLoadReader uses for a bad load sample.
-            return;
+            _wasEnabled = true;
+            var busy = UsageProbe.Observe(rule);
+            if (busy is null) { /* hold */ }
+            else if (!_rule.Update(busy.Value.Busy, busy.Value.Description, rule.QuietSeconds ?? 300, DateTimeOffset.UtcNow))
+            {
+                Notice = _rule.Paused ? _rule.Reason : null;
+                // Still need to evaluate light throttle when not paused, but don't overwrite notice if paused.
+                if (_rule.Paused) { await HandleLightThrottleAsync(null, ct); return; }
+            }
+            else
+            {
+                if (_rule.Paused) { await PauseAsync(ct); return; }
+                else await ResumeAsync(ct);
+            }
         }
 
-        if (!_rule.Update(busy.Value.Busy, busy.Value.Description, rule.QuietSeconds ?? 300, DateTimeOffset.UtcNow))
+        // Light throttle (DST) — reduce to 45% while running, restore after quiet.
+        await HandleLightThrottleAsync(lightRule, ct);
+    }
+
+    private async Task HandleLightThrottleAsync(GpuPauseRuleDto? lightRule, CancellationToken ct)
+    {
+        if (lightRule is null || !lightRule.NamesACondition)
         {
-            Notice = _rule.Paused ? _rule.Reason : null;
+            if (_lightThrottled) await RestoreLightThrottleAsync(ct);
+            if (!_rule.Paused) Notice = null;
             return;
         }
 
-        if (_rule.Paused) await PauseAsync(ct);
-        else await ResumeAsync(ct);
+        var busy = UsageProbe.Observe(lightRule);
+        if (busy is null) return;
+
+        if (!_lightRule.Update(busy.Value.Busy, busy.Value.Description, lightRule.QuietSeconds ?? 120, DateTimeOffset.UtcNow))
+        {
+            // No state change — keep current throttling.
+            if (_lightRule.Paused && !_rule.Paused) Notice = $"throttled to {LightThrottleLevel}% for {_lightRule.Reason}";
+            return;
+        }
+
+        if (_lightRule.Paused)
+        {
+            if (_rule.Paused) return; // heavy pause wins
+            await ApplyLightThrottleAsync(ct);
+        }
+        else await RestoreLightThrottleAsync(ct);
+    }
+
+    private async Task ApplyLightThrottleAsync(CancellationToken ct)
+    {
+        var pid = _miner.RunningPid();
+        if (pid is null) { Notice = _lightRule.Reason; return; }
+        // Full share approximate: use Environment.ProcessorCount vs thread count could be done via ThrottleService,
+        // here we apply as machine share via MinerCpuLimit with estimated full share.
+        var fullShare = 50.0; // fallback; ThrottleService measures exact, this is "немного резать" not exact science
+        try
+        {
+            var status = await _miner.GetStatusAsync(ct);
+            if (status.MiningThreads is >0) fullShare = Math.Clamp(100.0 * status.MiningThreads.Value / Environment.ProcessorCount, 1, 100);
+        }
+        catch { }
+
+        if (_limit.Apply(pid.Value, LightThrottleLevel, fullShare, out var detail))
+        {
+            _lightThrottled = true;
+            Notice = $"throttled to {LightThrottleLevel}% for {_lightRule.Reason}";
+            _log.LogInformation("CPU throttled to {Level}% for {Reason}: {Detail}", LightThrottleLevel, _lightRule.Reason, detail);
+        }
+    }
+
+    private async Task RestoreLightThrottleAsync(CancellationToken ct)
+    {
+        if (!_lightThrottled) return;
+        var pid = _miner.RunningPid();
+        if (pid is not null)
+        {
+            _limit.Apply(pid.Value, 100, 100, out _);
+            _log.LogInformation("CPU throttle lifted after DST quiet");
+        }
+        _lightThrottled = false;
+        _lightRule.Clear(DateTimeOffset.UtcNow);
+        if (!_rule.Paused) Notice = null;
     }
 
     private async Task PauseAsync(CancellationToken ct)
