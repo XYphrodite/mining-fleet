@@ -214,6 +214,7 @@ public sealed class MinerConfigStore
         return new GpuMinerSettingsDto
         {
             Enabled = patch.Enabled ?? current.Enabled,
+            Miner = patch.Miner ?? current.Miner,
             Algorithm = patch.Algorithm ?? current.Algorithm,
             PoolUrl = patch.PoolUrl ?? current.PoolUrl,
             User = patch.User ?? current.User,

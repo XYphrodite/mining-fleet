@@ -6,10 +6,11 @@ using MiningFleet.Contracts;
 
 namespace MiningFleet.Agent;
 
-/// <summary>Installs or updates lolMiner on this node.</summary>
+/// <summary>Installs or updates the GPU miner (lolMiner or SRBMiner-MULTI) on this node.</summary>
 public sealed class GpuInstallerService
 {
-    private const string ReleasesApi = "https://api.github.com/repos/Lolliedieb/lolMiner-releases/releases";
+    private const string LolMinerReleasesApi = "https://api.github.com/repos/Lolliedieb/lolMiner-releases/releases";
+    private const string SrMinerReleasesApi = "https://api.github.com/repos/doktor83/SRBMiner-Multi/releases";
 
     private readonly GpuMinerService _gpu;
     private readonly MinerConfigStore _config;
@@ -41,6 +42,7 @@ public sealed class GpuInstallerService
 
         try
         {
+            var software = request.Software ?? GpuMinerSoftware.LolMiner;
             var http = _httpFactory.CreateClient("github");
             string url;
             string? version = request.Version;
@@ -51,17 +53,17 @@ public sealed class GpuInstallerService
             }
             else
             {
-                var asset = await ResolveReleaseAssetAsync(http, request.Version, ct);
+                var asset = await ResolveReleaseAssetAsync(http, software, request.Version, ct);
                 if (asset is null)
                 {
-                    var wanted = string.Join(" or ", AssetPatterns());
-                    return new InstallResultDto(false, $"No lolMiner release asset matches this node ({RuntimeDescription()}); looked for {wanted}.", null, null);
+                    var wanted = string.Join(" or ", AssetPatterns(software));
+                    return new InstallResultDto(false, $"No {DisplayName(software)} release asset matches this node ({RuntimeDescription()}); looked for {wanted}.", null, null);
                 }
                 (url, version) = asset.Value;
             }
 
-            _log.LogInformation("Downloading lolMiner from {Url}", url);
-            var archive = Path.Combine(Path.GetTempPath(), $"lolMiner-{Guid.NewGuid():N}{GuessExtension(url)}");
+            _log.LogInformation("Downloading {Software} from {Url}", DisplayName(software), url);
+            var archive = Path.Combine(Path.GetTempPath(), $"{DisplayName(software)}-{Guid.NewGuid():N}{GuessExtension(url)}");
             try
             {
                 await using (var source = await http.GetStreamAsync(url, ct))
@@ -78,7 +80,9 @@ public sealed class GpuInstallerService
                 TryDelete(archive);
             }
 
-            var exeName = OperatingSystem.IsWindows() ? "lolMiner.exe" : "lolMiner";
+            var exeName = software == GpuMinerSoftware.SrMiner
+                ? (OperatingSystem.IsWindows() ? "SRBMiner-MULTI.exe" : "SRBMiner-MULTI")
+                : (OperatingSystem.IsWindows() ? "lolMiner.exe" : "lolMiner");
             var exe = Directory.EnumerateFiles(request.TargetPath, exeName, SearchOption.AllDirectories).FirstOrDefault();
             if (exe is null)
                 return new InstallResultDto(false, $"Unpacked the archive but found no {exeName} under {request.TargetPath}.", version, null);
@@ -87,10 +91,14 @@ public sealed class GpuInstallerService
                 File.SetUnixFileMode(exe, File.GetUnixFileMode(exe) | UnixFileMode.UserExecute | UnixFileMode.GroupExecute);
 
             var current = _config.Current.GpuMiner;
-            var updated = (current ?? new GpuMinerSettingsDto()) with { ExecutablePath = exe };
+            var updated = (current ?? new GpuMinerSettingsDto()) with
+            {
+                ExecutablePath = exe,
+                Miner = software,
+            };
             _config.Update(new MinerConfigDto { GpuMiner = updated });
 
-            var message = $"Installed lolMiner {version} to {exe}.";
+            var message = $"Installed {DisplayName(software)} {version} to {exe}.";
             if (overwritesRunning && request.RestartAfterInstall)
             {
                 var start = await _gpu.StartAsync(ct);
@@ -120,10 +128,14 @@ public sealed class GpuInstallerService
         }
     }
 
-    private static async Task<(string Url, string Version)?> ResolveReleaseAssetAsync(HttpClient http, string? version, CancellationToken ct)
+    private static string DisplayName(GpuMinerSoftware software) =>
+        software == GpuMinerSoftware.SrMiner ? "SRBMiner" : "lolMiner";
+
+    private static async Task<(string Url, string Version)?> ResolveReleaseAssetAsync(HttpClient http, GpuMinerSoftware software, string? version, CancellationToken ct)
     {
+        var releasesApi = software == GpuMinerSoftware.SrMiner ? SrMinerReleasesApi : LolMinerReleasesApi;
         var wantLatest = string.IsNullOrWhiteSpace(version) || version.Equals("latest", StringComparison.OrdinalIgnoreCase);
-        var endpoint = wantLatest ? $"{ReleasesApi}/latest" : $"{ReleasesApi}/tags/{version}";
+        var endpoint = wantLatest ? $"{releasesApi}/latest" : $"{releasesApi}/tags/{version}";
 
         using var doc = await http.GetFromJsonAsync<JsonDocument>(endpoint, ct)
             ?? throw new HttpRequestException("Empty response from the GitHub releases API.");
@@ -141,7 +153,7 @@ public sealed class GpuInstallerService
             .Where(a => a.Url.Length > 0)
             .ToList();
 
-        foreach (var pattern in AssetPatterns())
+        foreach (var pattern in AssetPatterns(software))
         {
             var match = candidates.FirstOrDefault(a => a.Name.Contains(pattern, StringComparison.OrdinalIgnoreCase));
             if (match is not null) return (match.Url, tag);
@@ -150,8 +162,18 @@ public sealed class GpuInstallerService
         return null;
     }
 
-    private static IEnumerable<string> AssetPatterns()
+    private static IEnumerable<string> AssetPatterns(GpuMinerSoftware software)
     {
+        if (software == GpuMinerSoftware.SrMiner)
+        {
+            // doktor83/SRBMiner-Multi release names: SRBMiner-Multi-3-7-9-win64.zip
+            if (OperatingSystem.IsWindows())
+                yield return "win64.zip";
+            else
+                yield return "Linux.tar.gz";
+            yield break;
+        }
+
         if (OperatingSystem.IsWindows())
             yield return "_Win64.zip";
         else if (OperatingSystem.IsMacOS())

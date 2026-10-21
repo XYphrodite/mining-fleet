@@ -1,0 +1,39 @@
+name: GPU miner checks
+
+on:
+  push:
+    branches: ['feat/pearl-*', 'feat/srbminer-*']
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - '.github/workflows/gpu-miner-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: mining-fleet
+      - uses: actions/checkout@v4
+        with:
+          repository: XYphrodite/self-update-kit
+          ref: 4a78bc9df66f26d7bdc3c0572e95131c2d1c3440
+          path: self-update-kit
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build and run GPU miner regressions
+        working-directory: mining-fleet
+        run: dotnet test tests/MiningFleet.Console.Tests/MiningFleet.Console.Tests.csproj --configuration Release --filter "FullyQualifiedName~SrMinerTests|FullyQualifiedName~GpuMiningTests|FullyQualifiedName~GpuPoolTests|FullyQualifiedName~MinerPauseTests|FullyQualifiedName~MarkupSafetyTests" --logger "trx;LogFileName=gpu-miner.trx"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gpu-miner-test-results
+          path: mining-fleet/tests/**/TestResults/*.trx

@@ -208,6 +208,8 @@ public sealed class GpuPoolService : IDisposable
     private static string? PriceId(string coin) => coin.Split('-')[0] switch
     {
         "xtm" => "minotari",
+        // CoinGecko's id for Pearl (PRL), which is not "pearl": that slug is a different token.
+        "prl" => "pearl-2",
         _ => null,
     };
 

@@ -230,19 +230,28 @@ public sealed class MinerScreen
 
     private async Task InstallGpuAsync(CancellationToken ct)
     {
-        UiHelpers.Header("Install / update lolMiner");
+        UiHelpers.Header("Install / update GPU miner");
 
         var nodes = UiHelpers.SelectNodes(_config, "Install on which nodes?");
         if (nodes.Count == 0) return;
 
+        var which = AnsiConsole.Prompt(UiHelpers.Menu("Which GPU miner", "< back",
+            "lolMiner (Tari CR29)",
+            "SRBMiner (Pearl / pearlhash)",
+            "< back"));
+        if (which == "< back") return;
+        var software = which.Contains("SRB") ? GpuMinerSoftware.SrMiner : GpuMinerSoftware.LolMiner;
+
         var defaultPath = nodes.Select(n => n.GpuMinerPath).FirstOrDefault(q => !string.IsNullOrWhiteSpace(q))
-                          ?? (OperatingSystem.IsWindows() ? @"C:\mining\lolMiner" : "/opt/lolMiner");
+                          ?? (software == GpuMinerSoftware.SrMiner
+                              ? (OperatingSystem.IsWindows() ? @"C:\mining\srbminer" : "/opt/srbminer")
+                              : (OperatingSystem.IsWindows() ? @"C:\mining\lolMiner" : "/opt/lolMiner"));
 
         var targetPath = AnsiConsole.Prompt(UiHelpers.Text("Install directory on the nodes:").DefaultValue(defaultPath));
         var version = AnsiConsole.Prompt(UiHelpers.Text("Release tag (or 'latest'):").DefaultValue("latest"));
         var restart = AnsiConsole.Confirm("Restart the GPU miner afterwards if it was running?", defaultValue: true);
 
-        AnsiConsole.MarkupLine("[grey]Each node downloads lolMiner itself from GitHub, so it needs outbound internet.[/]");
+        AnsiConsole.MarkupLine("[grey]Each node downloads the miner itself from GitHub, so it needs outbound internet.[/]");
         if (!AnsiConsole.Confirm($"Install to [bold]{UiHelpers.Escape(targetPath)}[/] on {nodes.Count} node(s)?", defaultValue: true))
             return;
 
@@ -251,6 +260,7 @@ public sealed class MinerScreen
             TargetPath = targetPath,
             Version = version,
             RestartAfterInstall = restart,
+            Software = software,
         };
 
         var results = new List<(string Node, InstallResultDto? Result, string? Error)>();
