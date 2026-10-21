@@ -1099,8 +1099,8 @@ mining-fleet/
 ## Document Information
 
 **Document Version**: v1.2
-**Last Updated**: 2026-10-15
-**Product Version**: 1.17.28
+**Last Updated**: 2026-10-21
+**Product Version**: 1.17.29
 **Status**: Active
 **Repository**: `c:\Repos\xmrig-fleet` (local folder; branch `master`), published at
 [github.com/XYphrodite/mining-fleet](https://github.com/XYphrodite/mining-fleet)
