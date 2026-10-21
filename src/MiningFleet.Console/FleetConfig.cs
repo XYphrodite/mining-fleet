@@ -213,6 +213,7 @@ public sealed class FleetConfig
         return new GpuMinerSettingsDto
         {
             Enabled = own?.Enabled ?? GpuMiner.Enabled,
+            Miner = own?.Miner ?? GpuMiner.Miner,
             Algorithm = own?.Algorithm ?? GpuMiner.Algorithm,
             PoolUrl = own?.PoolUrl ?? GpuMiner.PoolUrl,
             User = own?.User ?? GpuMiner.User,
@@ -276,7 +277,13 @@ public sealed class GpuMinerConfig
     /// <summary>Off unless asked for, like the throttle and for the same reason.</summary>
     public bool? Enabled { get; set; }
 
-    /// <summary>lolMiner's algorithm name, e.g. <c>CR29</c> or <c>NEXA</c>.</summary>
+    /// <summary>
+    /// Which GPU miner to run. Null means lolMiner, so an old fleet.json keeps mining CR29.
+    /// SRBMiner is the Pearl (pearlhash) path.
+    /// </summary>
+    public GpuMinerSoftware? Miner { get; set; }
+
+    /// <summary>Algorithm name as the selected miner spells it, e.g. <c>CR29</c> or <c>pearlhash</c>.</summary>
     public string? Algorithm { get; set; }
 
     /// <summary>host:port of the pool.</summary>

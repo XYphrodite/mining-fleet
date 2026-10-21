@@ -26,7 +26,10 @@ namespace MiningFleet.Agent;
 public sealed class GpuMinerService : IDisposable
 {
     /// <summary>Process name without extension, which is how <see cref="Process.GetProcessesByName"/> matches.</summary>
-    private const string ProcessName = "lolMiner";
+    private const string LolMinerProcessName = "lolMiner";
+
+    /// <summary>SRBMiner-MULTI's image name. Never stops lolMiner or xmrig.</summary>
+    private const string SrMinerProcessName = "SRBMiner-MULTI";
 
     private readonly MinerConfigStore _config;
     private readonly ILogger<GpuMinerService> _log;
@@ -59,19 +62,35 @@ public sealed class GpuMinerService : IDisposable
     /// <summary>Accepts either the exe path itself or the directory it was installed into.</summary>
     public string? ResolveExecutable()
     {
-        var configured = _config.Current.GpuMiner?.ExecutablePath;
+        var settings = _config.Current.GpuMiner;
+        var configured = settings?.ExecutablePath;
         if (string.IsNullOrWhiteSpace(configured)) return null;
 
         if (File.Exists(configured)) return configured;
         if (Directory.Exists(configured))
         {
-            var name = OperatingSystem.IsWindows() ? "lolMiner.exe" : "lolMiner";
+            var name = ExeName(SoftwareOf(settings));
             var candidate = Path.Combine(configured, name);
             if (File.Exists(candidate)) return candidate;
             return Directory.EnumerateFiles(configured, name, SearchOption.AllDirectories).FirstOrDefault();
         }
         return null;
     }
+
+    private static GpuMinerSoftware SoftwareOf(GpuMinerSettingsDto? settings) =>
+        settings?.Miner ?? GpuMinerSoftware.LolMiner;
+
+    private static string ExeName(GpuMinerSoftware software) => software switch
+    {
+        GpuMinerSoftware.SrMiner => OperatingSystem.IsWindows() ? "SRBMiner-MULTI.exe" : "SRBMiner-MULTI",
+        _ => OperatingSystem.IsWindows() ? "lolMiner.exe" : "lolMiner",
+    };
+
+    private static string ProcessNameOf(GpuMinerSoftware software) => software switch
+    {
+        GpuMinerSoftware.SrMiner => SrMinerProcessName,
+        _ => LolMinerProcessName,
+    };
 
     /// <summary>The running miner's pid, or null. Cheap, because the pause service asks every second.</summary>
     public int? RunningPid()
@@ -105,7 +124,7 @@ public sealed class GpuMinerService : IDisposable
 
             var exe = ResolveExecutable();
             if (exe is null)
-                return CommandResultDto.Failure("lolMiner not found. Run a GPU install first.");
+                return CommandResultDto.Failure($"{ExeName(SoftwareOf(settings))} not found. Run a GPU install first.");
 
             var missing = Missing(settings);
             if (missing is not null)
@@ -224,6 +243,7 @@ public sealed class GpuMinerService : IDisposable
         var status = new GpuMinerStatusDto
         {
             Running = running is not null,
+            Software = SoftwareOf(settings),
             Algorithm = settings?.Algorithm,
             Pool = settings?.PoolUrl,
             Notice = running is null ? Notice : null,
@@ -231,15 +251,20 @@ public sealed class GpuMinerService : IDisposable
 
         if (running is null || settings?.ApiPort is not { } port) return status;
 
+        var software = SoftwareOf(settings);
+        // lolMiner serves /summary; SRBMiner-MULTI serves its JSON at the API root.
+        var apiPath = software == GpuMinerSoftware.SrMiner ? "/" : "/summary";
         try
         {
-            using var response = await _http.GetAsync($"http://127.0.0.1:{port}/summary", ct);
+            using var response = await _http.GetAsync($"http://127.0.0.1:{port}{apiPath}", ct);
             if (!response.IsSuccessStatusCode)
                 return status with { Notice = $"the GPU miner's API returned {(int)response.StatusCode}" };
 
             await using var stream = await response.Content.ReadAsStreamAsync(ct);
             using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
-            return Merge(status, doc.RootElement);
+            return software == GpuMinerSoftware.SrMiner
+                ? MergeSrMiner(status, doc.RootElement)
+                : Merge(status, doc.RootElement);
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
         {
@@ -295,6 +320,54 @@ public sealed class GpuMinerService : IDisposable
         };
     }
 
+    /// <summary>
+    /// Folds SRBMiner-MULTI's JSON stats into the status. The official Parameters file documents
+    /// only that the API is at the root of the port; field names are read defensively across the
+    /// shapes the miner has shipped so a rename blanks one cell instead of breaking the screen.
+    /// </summary>
+    private static GpuMinerStatusDto MergeSrMiner(GpuMinerStatusDto status, JsonElement root)
+    {
+        var algo = root;
+        if (root.TryGetProperty("algorithms", out var algos) && algos.ValueKind == JsonValueKind.Array && algos.GetArrayLength() > 0)
+            algo = algos[0];
+        else if (root.TryGetProperty("Algorithms", out algos) && algos.ValueKind == JsonValueKind.Array && algos.GetArrayLength() > 0)
+            algo = algos[0];
+
+        var devices = new List<GpuDeviceStatusDto>();
+        if (root.TryGetProperty("devices", out var devs) && devs.ValueKind == JsonValueKind.Array)
+        {
+            for (var i = 0; i < devs.GetArrayLength(); i++)
+            {
+                var d = devs[i];
+                devices.Add(new GpuDeviceStatusDto(
+                    ReadString(d, "name") ?? ReadString(d, "Name") ?? $"GPU {i}",
+                    ReadNumber(d, "hashrate") ?? ReadNumber(d, "Hashrate"),
+                    ReadNumber(d, "temperature") ?? ReadNumber(d, "temp") ?? ReadNumber(d, "Temperature"),
+                    ReadNumber(d, "fan") ?? ReadNumber(d, "fan_percent") ?? ReadNumber(d, "Fan"),
+                    ReadNumber(d, "core_clock") ?? ReadNumber(d, "core_clock_mhz"),
+                    ReadNumber(d, "memory_clock") ?? ReadNumber(d, "memory_clock_mhz")));
+            }
+        }
+
+        var hashrate = ReadNumber(algo, "hashrate") ?? ReadNumber(algo, "Hashrate")
+            ?? ReadNumber(root, "hashrate") ?? ReadNumber(root, "Hashrate");
+        // SRBMiner reports raw H/s; the unit travels with the number so Th/s is never compared to g/s.
+        var unit = ReadString(algo, "hashrate_unit") ?? ReadString(algo, "unit")
+            ?? ReadString(root, "hashrate_unit") ?? "H/s";
+
+        return status with
+        {
+            Algorithm = ReadString(algo, "algorithm") ?? ReadString(algo, "name") ?? ReadString(algo, "Algorithm") ?? status.Algorithm,
+            Pool = ReadString(algo, "pool") ?? ReadString(algo, "Pool") ?? status.Pool,
+            Hashrate = hashrate,
+            HashrateUnit = unit,
+            AcceptedShares = (int?)(ReadNumber(algo, "accepted") ?? ReadNumber(algo, "Accepted") ?? ReadNumber(algo, "accepted_shares")),
+            StaleShares = (int?)(ReadNumber(algo, "stale") ?? ReadNumber(algo, "Stale") ?? ReadNumber(algo, "stale_shares")),
+            RejectedShares = (int?)(ReadNumber(algo, "rejected") ?? ReadNumber(algo, "Rejected") ?? ReadNumber(algo, "rejected_shares")),
+            Devices = devices,
+        };
+    }
+
     private static string? ReadString(JsonElement element, string name) =>
         element.ValueKind == JsonValueKind.Object && element.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String
             ? v.GetString()
@@ -322,8 +395,25 @@ public sealed class GpuMinerService : IDisposable
 
     private static List<string> BuildArguments(GpuMinerSettingsDto s)
     {
-        var args = new List<string>
+        if (SoftwareOf(s) == GpuMinerSoftware.SrMiner)
         {
+            // Flags from SRBMiner-MULTI's Parameters file (doktor83/SRBMiner-Multi). --wallet is the
+            // pool login as the pool wants it (Kryptex: address/worker). --api-enable is required
+            // for the JSON stats endpoint; the miner already binds 127.0.0.1.
+            return
+            [
+                "--disable-cpu",
+                "--algorithm-gpu", s.Algorithm!,
+                "--pool", s.PoolUrl!,
+                "--wallet", s.User!,
+                "--password", string.IsNullOrWhiteSpace(s.Password) ? "x" : s.Password,
+                "--api-enable",
+                "--api-port", s.ApiPort!.Value.ToString(),
+            ];
+        }
+
+        return
+        [
             "--algo", s.Algorithm!,
             "--pool", s.PoolUrl!,
             "--user", s.User!,
@@ -334,8 +424,7 @@ public sealed class GpuMinerService : IDisposable
             // tailnet. The loopback bind is the only thing protecting it, so it is not optional.
             "--apihost", "127.0.0.1",
             "--apiport", s.ApiPort!.Value.ToString(),
-        };
-        return args;
+        ];
     }
 
     /// <summary>
@@ -371,7 +460,11 @@ public sealed class GpuMinerService : IDisposable
     {
         try
         {
-            return Process.GetProcessesByName(ProcessName).Where(p => !p.HasExited).ToList();
+            // Both software names are collected so a switch from lolMiner to SRBMiner still stops
+            // the process that is actually running. xmrig is never in this list.
+            var list = Process.GetProcessesByName(LolMinerProcessName).Where(p => !p.HasExited).ToList();
+            list.AddRange(Process.GetProcessesByName(SrMinerProcessName).Where(p => !p.HasExited));
+            return list;
         }
         catch (InvalidOperationException)
         {

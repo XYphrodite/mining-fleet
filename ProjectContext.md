@@ -777,6 +777,17 @@ mining-fleet/
       GPU pause rule reported `javaw is running` while the game held the card. QuietSeconds
       remains 300. A Java process that is not Minecraft will also pause mining.
 
+- [x] **Pearl (pearlhash) via SRBMiner-MULTI on NVIDIA cards (2026-10-21).** GPU mining is no
+      longer lolMiner-only. `GpuMinerSoftware` selects `LolMiner` (default; old miner.json is
+      unchanged) or `SrMiner`. SRBMiner arguments follow doktor83/SRBMiner-Multi's Parameters
+      (`--algorithm-gpu pearlhash --wallet address/worker --api-enable`); stop still never touches
+      xmrig and no longer stops only the old image name. Install can target either binary from
+      GitHub releases. Kryptex PRL pool targets (`prl.kryptex.network`) and CoinGecko id
+      `pearl-2` feed the existing paid-per-day card economics. Unit tests cover config merge,
+      both argument lines and Pearl target parsing. **Not verified live** — no node has run
+      pearlhash yet; SRBMiner's JSON stats schema was not published in the Parameters file and
+      is read defensively across several field-name shapes.
+
 ### Implemented, Not Yet Verified Live ⏳
 
 - [x] **Dashboard income display cleanup (2026-09-28).** XTM rows require a known

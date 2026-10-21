@@ -308,7 +308,17 @@ public sealed record GpuMinerSettingsDto
     /// <summary>Off by default: a node only mines on its GPU once an operator asks it to.</summary>
     public bool? Enabled { get; init; }
 
-    /// <summary>lolMiner's algorithm name, e.g. <c>CR29</c> or <c>NEXA</c>. Case is passed through.</summary>
+    /// <summary>
+    /// Which GPU miner binary to run. Null reads as <see cref="GpuMinerSoftware.LolMiner"/> so an
+    /// old miner.json keeps mining CR29. SRBMiner is the Pearl (pearlhash) path; lolMiner stays
+    /// the Tari CR29 path.
+    /// </summary>
+    public GpuMinerSoftware? Miner { get; init; }
+
+    /// <summary>
+    /// Algorithm name as the selected miner spells it, e.g. <c>CR29</c> for lolMiner or
+    /// <c>pearlhash</c> for SRBMiner. Case is passed through.
+    /// </summary>
     public string? Algorithm { get; init; }
 
     /// <summary>host:port of the mining pool.</summary>
@@ -426,6 +436,9 @@ public sealed record GpuPauseRuleDto
 public sealed record GpuMinerStatusDto
 {
     public bool Running { get; init; }
+
+    /// <summary>Which miner binary is configured; null means the node never learned and defaults to lolMiner.</summary>
+    public GpuMinerSoftware? Software { get; init; }
     public string? Algorithm { get; init; }
     public string? Pool { get; init; }
 
@@ -547,11 +560,17 @@ public sealed record ThrottleStatusDto
     public double SecondsAtLevel { get; init; }
 }
 
-/// <summary>Install or update xmrig. Either give an explicit <see cref="DownloadUrl"/> or a GitHub release tag.</summary>
+/// <summary>Install or update a miner. Either give an explicit <see cref="DownloadUrl"/> or a GitHub release tag.</summary>
 public sealed record InstallRequestDto
 {
-    /// <summary>Directory xmrig should be installed into, e.g. C:\mining\xmrig.</summary>
+    /// <summary>Directory the miner should be installed into, e.g. C:\mining\xmrig.</summary>
     public string TargetPath { get; init; } = "";
+
+    /// <summary>
+    /// Which GPU miner to install when this request targets the GPU path. Null keeps lolMiner,
+    /// so existing console pushes and old scripts stay on Tari CR29.
+    /// </summary>
+    public GpuMinerSoftware? Software { get; init; }
     /// <summary>GitHub release tag such as "v6.22.2", or null/"latest" for the newest release.</summary>
     public string? Version { get; init; }
     /// <summary>Overrides <see cref="Version"/> when set: a direct .zip / .tar.gz URL.</summary>
@@ -567,6 +586,17 @@ public enum MinerKind
 {
     Xmrig = 0,
     LolMiner = 1,
+    SrMiner = 2,
+}
+
+/// <summary>Which GPU miner software this node should launch.</summary>
+public enum GpuMinerSoftware
+{
+    /// <summary>lolMiner — Tari CR29 and the rest of its coin list.</summary>
+    LolMiner = 0,
+
+    /// <summary>SRBMiner-MULTI — Pearl (pearlhash) and other SRB algorithms.</summary>
+    SrMiner = 1,
 }
 
 public sealed record DirEntryDto(string Name, bool IsDirectory, long Size, DateTimeOffset? Modified);
