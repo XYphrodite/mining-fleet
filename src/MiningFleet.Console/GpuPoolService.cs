@@ -94,9 +94,19 @@ public sealed class GpuPoolService : IDisposable
 
     private static readonly TimeSpan PriceTtl = TimeSpan.FromMinutes(10);
 
-    private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(12) };
+    private readonly HttpClient _http;
+    private readonly TimeProvider _clock;
     private readonly Dictionary<string, (DateTimeOffset At, GpuPoolStats? Stats)> _cache = new();
     private readonly Dictionary<string, (DateTimeOffset At, double? Price)> _prices = new();
+
+    public GpuPoolService(HttpMessageHandler? handler = null, TimeProvider? clock = null)
+    {
+        _http = handler is null ? new HttpClient() : new HttpClient(handler);
+        _http.Timeout = TimeSpan.FromSeconds(12);
+        // CoinGecko rejects requests without a User-Agent header with HTTP 403.
+        _http.DefaultRequestHeaders.UserAgent.ParseAdd("mining-fleet-console");
+        _clock = clock ?? TimeProvider.System;
+    }
 
     /// <summary>
     /// Reads the pool and the coin out of settings the operator has already given the card.
@@ -124,8 +134,9 @@ public sealed class GpuPoolService : IDisposable
 
     public async Task<GpuPoolStats?> GetAsync(GpuPoolTarget target, CancellationToken ct)
     {
+        var now = _clock.GetUtcNow();
         var key = $"{target.Provider}/{target.Coin}/{target.Address}";
-        if (_cache.TryGetValue(key, out var cached) && DateTimeOffset.UtcNow - cached.At < Ttl)
+        if (_cache.TryGetValue(key, out var cached) && now - cached.At < Ttl)
             return cached.Stats;
 
         var fetched = await FetchKryptexAsync(target, ct);
@@ -134,7 +145,7 @@ public sealed class GpuPoolService : IDisposable
         // the same rule MarketService follows for the pool it reads.
         if (fetched is null && cached.Stats is not null) return cached.Stats;
 
-        _cache[key] = (DateTimeOffset.UtcNow, fetched);
+        _cache[key] = (now, fetched);
         return fetched;
     }
 
@@ -156,7 +167,7 @@ public sealed class GpuPoolService : IDisposable
             await PaidAsync(root, target, ct),
             Number(balance.Value, "threshold"),
             ParsePayouts(payouts),
-            DateTimeOffset.UtcNow);
+            _clock.GetUtcNow());
     }
 
     private async Task<double?> PaidAsync(string root, GpuPoolTarget target, CancellationToken ct)
@@ -225,9 +236,11 @@ public sealed class GpuPoolService : IDisposable
     {
         if (PriceId(target.Coin) is not { } id) return null;
 
+        var now = _clock.GetUtcNow();
         var vs = currency.ToLowerInvariant();
         var key = $"price/{id}/{vs}";
-        if (_prices.TryGetValue(key, out var cached) && DateTimeOffset.UtcNow - cached.At < PriceTtl)
+        if (_prices.TryGetValue(key, out var cached)
+            && now - cached.At < (cached.Price is not null ? PriceTtl : Ttl))
             return cached.Price;
 
         var url = $"https://api.coingecko.com/api/v3/simple/price?ids={id}&vs_currencies={vs}";
@@ -238,7 +251,7 @@ public sealed class GpuPoolService : IDisposable
         // Keeping the last good number beats blanking the column every few refreshes.
         if (price is null && cached.Price is not null) return cached.Price;
 
-        _prices[key] = (DateTimeOffset.UtcNow, price);
+        _prices[key] = (now, price);
         return price;
     }
 

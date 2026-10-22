@@ -1,3 +1,5 @@
+using System.Net;
+using System.Text;
 using MiningFleet.Console.Ui;
 
 namespace MiningFleet.Console.Tests;
@@ -192,5 +194,34 @@ public sealed class GpuIncomeTests
 
         // Separators follow the machine's culture, so only the digits and the coin are compared.
         Assert.Equal(expected, new string(text.Where(char.IsLetterOrDigit).ToArray()));
+    }
+
+    [Fact]
+    public async Task Price_queries_send_a_user_agent_because_coingecko_rejects_anonymous_requests()
+    {
+        using var pool = new GpuPoolService(new StubHandler(req =>
+        {
+            if (req.Headers.UserAgent.Count == 0)
+                return new HttpResponseMessage(HttpStatusCode.Forbidden);
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """{"pearl-2":{"rub":172.01},"minotari":{"rub":0.0977}}""",
+                    Encoding.UTF8, "application/json")
+            };
+        }));
+
+        var prlPrice = await pool.GetPriceAsync(Prl, "RUB", CancellationToken.None);
+        var xtmPrice = await pool.GetPriceAsync(new("luckypool", "xtm", "addr"), "RUB", CancellationToken.None);
+
+        Assert.Equal(172.01, prlPrice);
+        Assert.Equal(0.0977, xtmPrice);
+    }
+
+    private sealed class StubHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) =>
+            Task.FromResult(respond(request));
     }
 }

@@ -59,6 +59,7 @@ public sealed class XtmIncomeService : IDisposable
     {
         _http = handler is null ? new HttpClient() : new HttpClient(handler);
         _http.Timeout = TimeSpan.FromSeconds(12);
+        _http.DefaultRequestHeaders.UserAgent.ParseAdd("mining-fleet-console");
         _clock = clock ?? TimeProvider.System;
     }
 
