@@ -321,9 +321,17 @@ public sealed class GpuMinerService : IDisposable
     }
 
     /// <summary>
-    /// Folds SRBMiner-MULTI's JSON stats into the status. The official Parameters file documents
-    /// only that the API is at the root of the port; field names are read defensively across the
-    /// shapes the miner has shipped so a rename blanks one cell instead of breaking the screen.
+    /// Folds SRBMiner-MULTI's JSON stats into the status. The Parameters file says only that the
+    /// API sits at the root of the port; the shape below was read off a live 3.6.1 on an RTX 4060
+    /// mining pearlhash.
+    ///
+    /// <c>gpu_devices[]</c> carries the card (<c>model</c>, <c>temperature</c>, <c>fan_speed_percent</c>,
+    /// <c>core_clock</c>, <c>memory_clock</c>) but no hashrate. The rate lives on the algorithm, as
+    /// <c>algorithms[0].hashrate.gpu.{gpuN, total}</c> in raw H/s, and the shares are a nested
+    /// <c>shares{accepted, rejected}</c> object. There is no stale-share counter at all.
+    ///
+    /// The older flat field names stay as fallbacks, and every read goes through a ValueKind check,
+    /// so a renamed field blanks one cell instead of breaking the screen.
     /// </summary>
     private static GpuMinerStatusDto MergeSrMiner(GpuMinerStatusDto status, JsonElement root)
     {
@@ -333,37 +341,61 @@ public sealed class GpuMinerService : IDisposable
         else if (root.TryGetProperty("Algorithms", out algos) && algos.ValueKind == JsonValueKind.Array && algos.GetArrayLength() > 0)
             algo = algos[0];
 
+        var rates = default(JsonElement);
+        if (algo.ValueKind == JsonValueKind.Object) algo.TryGetProperty("hashrate", out rates);
+        var gpuRates = default(JsonElement);
+        if (rates.ValueKind == JsonValueKind.Object) rates.TryGetProperty("gpu", out gpuRates);
+
         var devices = new List<GpuDeviceStatusDto>();
-        if (root.TryGetProperty("devices", out var devs) && devs.ValueKind == JsonValueKind.Array)
+        var cards = root.TryGetProperty("gpu_devices", out var gpuDevs) && gpuDevs.ValueKind == JsonValueKind.Array
+            ? gpuDevs
+            : root.TryGetProperty("devices", out var devs) && devs.ValueKind == JsonValueKind.Array ? devs : default;
+        if (cards.ValueKind == JsonValueKind.Array)
         {
-            for (var i = 0; i < devs.GetArrayLength(); i++)
+            for (var i = 0; i < cards.GetArrayLength(); i++)
             {
-                var d = devs[i];
+                var d = cards[i];
+                // The per-card rate is keyed by the card's own handle ("gpu0"), not by position.
+                var handle = ReadString(d, "device") ?? $"gpu{ReadNumber(d, "id") ?? i}";
                 devices.Add(new GpuDeviceStatusDto(
-                    ReadString(d, "name") ?? ReadString(d, "Name") ?? $"GPU {i}",
-                    ReadNumber(d, "hashrate") ?? ReadNumber(d, "Hashrate"),
+                    ReadString(d, "model") ?? ReadString(d, "name") ?? ReadString(d, "Name") ?? $"GPU {i}",
+                    ReadNumber(gpuRates, handle) ?? ReadNumber(d, "hashrate") ?? ReadNumber(d, "Hashrate"),
                     ReadNumber(d, "temperature") ?? ReadNumber(d, "temp") ?? ReadNumber(d, "Temperature"),
-                    ReadNumber(d, "fan") ?? ReadNumber(d, "fan_percent") ?? ReadNumber(d, "Fan"),
+                    ReadNumber(d, "fan_speed_percent") ?? ReadNumber(d, "fan") ?? ReadNumber(d, "fan_percent") ?? ReadNumber(d, "Fan"),
                     ReadNumber(d, "core_clock") ?? ReadNumber(d, "core_clock_mhz"),
                     ReadNumber(d, "memory_clock") ?? ReadNumber(d, "memory_clock_mhz")));
             }
         }
 
-        var hashrate = ReadNumber(algo, "hashrate") ?? ReadNumber(algo, "Hashrate")
+        // The GPU total is the current rate; "1min" is the same thing smoothed, and a flat
+        // number is what older builds sent. The CPU rate is deliberately never read: this
+        // status describes the card.
+        var hashrate = ReadNumber(gpuRates, "total")
+            ?? ReadNumber(rates, "1min")
+            ?? ReadNumber(algo, "hashrate") ?? ReadNumber(algo, "Hashrate")
             ?? ReadNumber(root, "hashrate") ?? ReadNumber(root, "Hashrate");
         // SRBMiner reports raw H/s; the unit travels with the number so Th/s is never compared to g/s.
         var unit = ReadString(algo, "hashrate_unit") ?? ReadString(algo, "unit")
             ?? ReadString(root, "hashrate_unit") ?? "H/s";
 
+        var shares = default(JsonElement);
+        if (algo.ValueKind == JsonValueKind.Object) algo.TryGetProperty("shares", out shares);
+
+        // The pool is an object here ({"pool": "host:port", "wallet": ...}) and a bare string in
+        // older builds. Only the host is read: the wallet inside that object is the operator's login.
+        var pool = default(JsonElement);
+        if (algo.ValueKind == JsonValueKind.Object) algo.TryGetProperty("pool", out pool);
+        var poolName = pool.ValueKind == JsonValueKind.Object ? ReadString(pool, "pool") : ReadString(algo, "pool");
+
         return status with
         {
             Algorithm = ReadString(algo, "algorithm") ?? ReadString(algo, "name") ?? ReadString(algo, "Algorithm") ?? status.Algorithm,
-            Pool = ReadString(algo, "pool") ?? ReadString(algo, "Pool") ?? status.Pool,
+            Pool = poolName ?? ReadString(algo, "Pool") ?? status.Pool,
             Hashrate = hashrate,
             HashrateUnit = unit,
-            AcceptedShares = (int?)(ReadNumber(algo, "accepted") ?? ReadNumber(algo, "Accepted") ?? ReadNumber(algo, "accepted_shares")),
+            AcceptedShares = (int?)(ReadNumber(shares, "accepted") ?? ReadNumber(algo, "accepted") ?? ReadNumber(algo, "Accepted") ?? ReadNumber(algo, "accepted_shares")),
             StaleShares = (int?)(ReadNumber(algo, "stale") ?? ReadNumber(algo, "Stale") ?? ReadNumber(algo, "stale_shares")),
-            RejectedShares = (int?)(ReadNumber(algo, "rejected") ?? ReadNumber(algo, "Rejected") ?? ReadNumber(algo, "rejected_shares")),
+            RejectedShares = (int?)(ReadNumber(shares, "rejected") ?? ReadNumber(algo, "rejected") ?? ReadNumber(algo, "Rejected") ?? ReadNumber(algo, "rejected_shares")),
             Devices = devices,
         };
     }

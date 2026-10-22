@@ -784,11 +784,32 @@ mining-fleet/
       xmrig and no longer stops only the old image name. Install can target either binary from
       GitHub releases. Kryptex PRL pool targets (`prl.kryptex.network`) and CoinGecko id
       `pearl-2` feed the existing paid-per-day card economics. Unit tests cover config merge,
-      both argument lines and Pearl target parsing. **Not verified live** — no node has run
-      pearlhash yet; SRBMiner's JSON stats schema was not published in the Parameters file and
-      is read defensively across several field-name shapes.
+      both argument lines and Pearl target parsing. **Verified live on`r`n      `mks68i7rtx` (2026-10-22), start and pool only.** The agent started
+      SRBMiner-MULTI 3.6.1 through `/gpu/start` in the agent's own session (session 0,
+      `RunInInteractiveSession` false) on an RTX 4060, it connected to `prl.kryptex.network:7048`
+      and the pool accepted a share within seconds, at about 59.5 TH/s and 100% GPU load. That says
+      nothing yet about what Pearl pays: see the unverified items below.
 
 ### Implemented, Not Yet Verified Live ⏳
+
+- [x] **Pearl status and pool income, read from SRBMiner's real API (2026-10-22).** The first
+      `MergeSrMiner` guessed its field names and, on the live node above, the fleet showed no
+      hashrate and no devices while the miner ran at 59.5 TH/s. It now reads SRBMiner 3.6.1's actual
+      shape, captured from that node: `gpu_devices[]` for the card (`model`, `temperature`,
+      `fan_speed_percent`, clocks), `algorithms[0].hashrate.gpu.{gpuN,total}` for the rate in raw
+      H/s, `algorithms[0].shares{accepted,rejected}` and `algorithms[0].pool.pool` for the pool
+      (never the `wallet` beside it). There is no stale-share counter. Unit tests parse the captured
+      document with the wallet replaced, plus fallbacks and a CPU-rate guard. **The new parser has
+      not yet run inside a deployed agent**; the node still runs the older one.
+      The console scales raw H/s (`59.45 TH/s`) and sums the fleet GPU rate per unit, never across
+      units. `GpuIncome`/`GpuIncomeLedger`/`GpuIncomeService` add the Pearl equivalent of the XTM
+      panel: Kryptex pays PRL at 1 whole coin, so income is the growth of `pending + paid` from the
+      pool balance (`/prl/api/v1/miner/balance`, `/payouts/.../stats`), kept in `gpu-income.json`
+      beside fleet.json (hashed wallet keys, gitignored) so the forecast survives restarts. Windows
+      of 24/12/6/3/1 h are interpolated between readings and refused across a gap over 12 h; a
+      falling balance is never income. The dashboard shows **PRL - pool wallet income**; Economics
+      falls back to balance growth when there are fewer than two payouts. Not verified live: the
+      income panel against a deployed fleet, and what Pearl actually pays against CR29.
 
 - [x] **Dashboard income display cleanup (2026-09-28).** XTM rows require a known
       supported wallet, while pool failures and unverified settings for known wallets remain
@@ -1099,8 +1120,8 @@ mining-fleet/
 ## Document Information
 
 **Document Version**: v1.2
-**Last Updated**: 2026-10-21
-**Product Version**: 1.17.29
+**Last Updated**: 2026-10-22
+**Product Version**: 1.17.30
 **Status**: Active
 **Repository**: `c:\Repos\xmrig-fleet` (local folder; branch `master`), published at
 [github.com/XYphrodite/mining-fleet](https://github.com/XYphrodite/mining-fleet)

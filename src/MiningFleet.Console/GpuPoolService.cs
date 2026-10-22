@@ -19,7 +19,8 @@ public sealed record GpuPoolStats(
     double? Unconfirmed,
     double? Paid,
     double? Threshold,
-    IReadOnlyList<GpuPayout> Payouts)
+    IReadOnlyList<GpuPayout> Payouts,
+    DateTimeOffset? FetchedAt = null)
 {
     /// <summary>Everything earned and not yet sent.</summary>
     public double? Pending => Confirmed is null && Unconfirmed is null ? null : (Confirmed ?? 0) + (Unconfirmed ?? 0);
@@ -154,7 +155,8 @@ public sealed class GpuPoolService : IDisposable
             Number(balance.Value, "unconfirmed"),
             await PaidAsync(root, target, ct),
             Number(balance.Value, "threshold"),
-            ParsePayouts(payouts));
+            ParsePayouts(payouts),
+            DateTimeOffset.UtcNow);
     }
 
     private async Task<double?> PaidAsync(string root, GpuPoolTarget target, CancellationToken ct)

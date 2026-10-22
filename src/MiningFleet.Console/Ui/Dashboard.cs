@@ -16,12 +16,15 @@ public sealed class Dashboard : IDisposable
     private readonly FleetService _fleet;
     private readonly MarketService _market;
     private readonly XtmIncomeService _xtm = new();
+    private readonly GpuIncomeService _gpuIncome;
 
     private PoolNetworkStats? _network;
     private double? _price;
     private readonly Dictionary<string, XtmAccount> _xtmAccounts = new();
     private IReadOnlyList<XtmIncomeRow> _xtmIncome = [];
     private DateTimeOffset _xtmFetchedAt = DateTimeOffset.MinValue;
+    private readonly Dictionary<string, GpuPoolTarget> _gpuTargets = new();
+    private IReadOnlyList<GpuIncomeRow> _gpuIncomeRows = [];
     private MoneyFormat? _money;
     private DateTimeOffset _marketFetchedAt = DateTimeOffset.MinValue;
 
@@ -30,6 +33,7 @@ public sealed class Dashboard : IDisposable
         _config = config;
         _fleet = fleet;
         _market = market;
+        _gpuIncome = new GpuIncomeService(new GpuPoolService(), GpuIncomeLedger.For(config));
     }
 
     public async Task ShowAsync(CancellationToken ct)
@@ -84,6 +88,7 @@ public sealed class Dashboard : IDisposable
         if (DateTimeOffset.UtcNow - _xtmFetchedAt < MarketRefresh) return;
         _xtmFetchedAt = DateTimeOffset.UtcNow;
         var accounts = new List<(string Node, XtmAccount Account, bool Unverified)>();
+        var gpuAccounts = new List<(string Node, GpuPoolTarget Target, bool Unverified)>();
         var rows = new List<XtmIncomeRow>();
         foreach (var state in states)
         {
@@ -103,6 +108,15 @@ public sealed class Dashboard : IDisposable
                         var target = XtmAccount.From(gpu?.PoolUrl, gpu?.User);
                         if (target is not null) _xtmAccounts[key] = target;
                         else _xtmAccounts.Remove(key);
+
+                        // Pearl and any other coin read from Kryptex's balance. The same settings
+                        // answer both questions, so the node is asked once.
+                        var pool = GpuPoolService.TargetFor(new GpuMinerConfig
+                        {
+                            Enabled = gpu?.Enabled, PoolUrl = gpu?.PoolUrl, User = gpu?.User,
+                        });
+                        if (pool is not null) _gpuTargets[key] = pool;
+                        else _gpuTargets.Remove(key);
                     }
                 }
                 catch (Exception ex) when (ex is HttpRequestException or System.Text.Json.JsonException
@@ -110,12 +124,25 @@ public sealed class Dashboard : IDisposable
             }
             if (_xtmAccounts.TryGetValue(key, out var account))
                 accounts.Add((state.Node.Name, account, unverified));
+            if (_gpuTargets.TryGetValue(key, out var gpuTarget))
+                gpuAccounts.Add((state.Node.Name, gpuTarget, unverified));
         }
         // Group BEFORE requesting or rendering: two cards on one wallet are one income stream.
         foreach (var group in accounts.GroupBy(a => a.Account))
             rows.Add(new(string.Join(", ", group.Select(a => a.Node)), group.Key,
                 await service.GetAsync(group.Key, ct), group.Any(a => a.Unverified)));
         _xtmIncome = rows;
+
+        var gpuRows = new List<GpuIncomeRow>();
+        var currency = _config.Electricity.Currency;
+        foreach (var group in gpuAccounts.GroupBy(a => a.Target))
+        {
+            gpuRows.Add(new(string.Join(", ", group.Select(a => a.Node)), group.Key,
+                await _gpuIncome.GetAsync(group.Key, ct),
+                await _gpuIncome.GetPriceAsync(group.Key, currency, ct),
+                group.Any(a => a.Unverified)));
+        }
+        _gpuIncomeRows = gpuRows;
     }
 
     private IRenderable Compose(IReadOnlyList<NodeState> states, FleetEconomics economics)
@@ -202,8 +229,8 @@ public sealed class Dashboard : IDisposable
         if (economics.TotalGpuHashrate > 0)
         {
             summary.AddRow(
-                Cell("GPU", $"[aqua]{Economics.FormatGpuHashrate(economics.TotalGpuHashrate)}[/]"),
-                Cell("XTM", _xtmIncome.Any(row => row.Account is not null)
+                Cell("GPU", $"[aqua]{UiHelpers.Escape(Economics.FormatGpuFleetRate(states))}[/]"),
+                Cell("Pool income", _xtmIncome.Any(row => row.Account is not null) || _gpuIncomeRows.Count > 0
                     ? "see pool wallet income below" : "no supported wallet data"),
                 Cell("GPU shares", states.Where(x=>x.GpuMining).Sum(x=>x.Gpu?.AcceptedShares??0) + "/" + states.Where(x=>x.GpuMining).Sum(x=> (x.Gpu?.AcceptedShares??0)+(x.Gpu?.RejectedShares??0)+(x.Gpu?.StaleShares??0))));
         }
@@ -216,9 +243,10 @@ public sealed class Dashboard : IDisposable
         return new Rows(
             table,
             new Panel(new Rows(summary, new Markup(
-                "[grey]XMR - power = XMR income minus the displayed power cost. XTM income is accounted for separately.[/]")))
+                "[grey]XMR - power = XMR income minus the displayed power cost. XTM and PRL income are accounted for separately.[/]")))
                 .Header("[bold]Totals[/]").Border(BoxBorder.Rounded).BorderColor(Color.Grey35).Expand(),
             XtmIncomePanel.Render(_xtmIncome, DateTimeOffset.UtcNow),
+            GpuIncomePanel.Render(_gpuIncomeRows, money, DateTimeOffset.UtcNow),
             footer);
     }
 
@@ -246,5 +274,9 @@ public sealed class Dashboard : IDisposable
         while (System.Console.KeyAvailable) System.Console.ReadKey(intercept: true);
     }
 
-    public void Dispose() => _xtm.Dispose();
+    public void Dispose()
+    {
+        _xtm.Dispose();
+        _gpuIncome.Dispose();
+    }
 }

@@ -137,7 +137,7 @@ public static class UiHelpers
         }
 
         if (gpu.Hashrate is not { } rate) return "[yellow]starting[/]";
-        return $"[green]{rate:N2} {Escape(gpu.HashrateUnit ?? "")}[/]".Replace(" [/]", "[/]");
+        return $"[green]{Escape(Economics.FormatGpuRate(rate, gpu.HashrateUnit))}[/]";
     }
 
     /// <summary>

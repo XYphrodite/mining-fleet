@@ -11,3 +11,6 @@ miner.json
 
 # Release staging produced by deploy/release.ps1
 release/
+
+# Pool wallet income readings (hashed wallet keys), written beside fleet.json.
+gpu-income.json

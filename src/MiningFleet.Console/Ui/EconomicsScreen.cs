@@ -9,12 +9,14 @@ public sealed class EconomicsScreen
     private readonly FleetService _fleet;
     private readonly MarketService _market;
     private readonly GpuPoolService _gpuPool = new();
+    private readonly GpuIncomeService _gpuIncome;
 
     public EconomicsScreen(FleetConfig config, FleetService fleet, MarketService market)
     {
         _config = config;
         _fleet = fleet;
         _market = market;
+        _gpuIncome = new GpuIncomeService(_gpuPool, GpuIncomeLedger.For(config));
     }
 
     public async Task ShowAsync(CancellationToken ct)
@@ -188,7 +190,7 @@ public sealed class EconomicsScreen
         var mining = states.Where(s => s.GpuMining).ToList();
         if (mining.Count == 0) return;
 
-        var found = new List<(NodeState Node, GpuPoolStats Stats, double? Price)>();
+        var found = new List<(NodeState Node, GpuPoolStats Stats, double? Price, GpuIncome? Income)>();
         var unreadable = new List<string>();
 
         await AnsiConsole.Status().StartAsync("Reading what the cards earned...", async _ =>
@@ -204,10 +206,11 @@ public sealed class EconomicsScreen
                     continue;
                 }
 
-                var stats = await _gpuPool.GetAsync(target, ct);
+                var income = await _gpuIncome.GetAsync(target, ct);
+                var stats = income?.Stats;
                 if (stats is null) { unreadable.Add(state.Node.Name); continue; }
 
-                found.Add((state, stats, await _gpuPool.GetPriceAsync(target, currency, ct)));
+                found.Add((state, stats, await _gpuPool.GetPriceAsync(target, currency, ct), income));
             }
         });
 
@@ -227,9 +230,14 @@ public sealed class EconomicsScreen
         var now = DateTimeOffset.UtcNow;
         double? valuePerDay = null;
 
-        foreach (var (state, stats, price) in found)
+        foreach (var (state, stats, price, income) in found)
         {
-            var perDay = stats.PaidPerDay();
+            // Payments first: they are money that has actually left the pool. A coin with a high
+            // payout threshold (Pearl pays at one whole coin) has none for days, so the growth of
+            // the pool balance stands in, and the cell says so.
+            var paidPerDay = stats.PaidPerDay();
+            var accruedPerDay = paidPerDay is null ? income?.ForecastPerDay : null;
+            var perDay = paidPerDay ?? accruedPerDay;
             var span = stats.PayoutSpan();
             double? value = perDay is { } p && price is { } q ? p * q : null;
             if (value is { } v) valuePerDay = (valuePerDay ?? 0) + v;
@@ -237,7 +245,7 @@ public sealed class EconomicsScreen
             table.AddRow(
                 new Markup(UiHelpers.Escape(state.Node.Name)),
                 new Markup(UiHelpers.Escape(stats.Target.Coin.ToUpperInvariant())),
-                new Markup(perDay is { } d ? $"[aqua]{d:N0}[/]" : "[grey]-[/]"),
+                new Markup(perDay is { } d ? $"[aqua]{(accruedPerDay is null ? d.ToString("N0") : GpuIncomePanel.Amount(d, "").Trim())}[/]" : "[grey]-[/]"),
                 new Markup(value is null ? $"[grey]price unavailable in {UiHelpers.Escape(currency)}[/]" : money.Markup(value)),
                 new Markup(stats.Paid is { } paid ? $"{paid:N2}" : "[grey]-[/]"),
                 new Markup(stats.Pending is { } pending
@@ -249,7 +257,9 @@ public sealed class EconomicsScreen
                 // history, not a forecast.
                 new Markup(span is { } s
                     ? $"[grey]{s.TotalHours:N0} h, {stats.Payouts.Count} payout(s)[/]" + Age(stats, now)
-                    : "[yellow]too few payouts to say[/]"));
+                    : income?.ForecastBasis is { } basis
+                        ? $"[grey]pool balance growth over {basis.Hours:0.#} h, no payouts yet[/]"
+                        : "[yellow]too few payouts to say[/]"));
         }
 
         AnsiConsole.Write(table);
