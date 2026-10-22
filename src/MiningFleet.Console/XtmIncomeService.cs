@@ -45,7 +45,7 @@ public sealed record XtmIncome(
 }
 
 public sealed record XtmIncomeRow(string Nodes, XtmAccount? Account, XtmIncome? Income,
-    bool ConfigUnverified = false);
+    bool ConfigUnverified = false, double? Price = null);
 
 /// <summary>Read-only LuckyPool reward accounting. Cached failures retain the original age.</summary>
 public sealed class XtmIncomeService : IDisposable

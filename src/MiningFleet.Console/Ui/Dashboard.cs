@@ -128,13 +128,16 @@ public sealed class Dashboard : IDisposable
                 gpuAccounts.Add((state.Node.Name, gpuTarget, unverified));
         }
         // Group BEFORE requesting or rendering: two cards on one wallet are one income stream.
+        var currency = _config.Electricity.Currency;
+        var xtmPrice = accounts.Count > 0
+            ? await _gpuIncome.GetPriceAsync(new GpuPoolTarget("luckypool", "xtm", ""), currency, ct)
+            : null;
         foreach (var group in accounts.GroupBy(a => a.Account))
             rows.Add(new(string.Join(", ", group.Select(a => a.Node)), group.Key,
-                await service.GetAsync(group.Key, ct), group.Any(a => a.Unverified)));
+                await service.GetAsync(group.Key, ct), group.Any(a => a.Unverified), xtmPrice));
         _xtmIncome = rows;
 
         var gpuRows = new List<GpuIncomeRow>();
-        var currency = _config.Electricity.Currency;
         foreach (var group in gpuAccounts.GroupBy(a => a.Target))
         {
             gpuRows.Add(new(string.Join(", ", group.Select(a => a.Node)), group.Key,
@@ -245,7 +248,7 @@ public sealed class Dashboard : IDisposable
             new Panel(new Rows(summary, new Markup(
                 "[grey]XMR - power = XMR income minus the displayed power cost. XTM and PRL income are accounted for separately.[/]")))
                 .Header("[bold]Totals[/]").Border(BoxBorder.Rounded).BorderColor(Color.Grey35).Expand(),
-            XtmIncomePanel.Render(_xtmIncome, DateTimeOffset.UtcNow),
+            XtmIncomePanel.Render(_xtmIncome, DateTimeOffset.UtcNow, money),
             GpuIncomePanel.Render(_gpuIncomeRows, money, DateTimeOffset.UtcNow),
             footer);
     }

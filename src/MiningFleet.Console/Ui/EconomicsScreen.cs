@@ -10,6 +10,7 @@ public sealed class EconomicsScreen
     private readonly MarketService _market;
     private readonly GpuPoolService _gpuPool = new();
     private readonly GpuIncomeService _gpuIncome;
+    private readonly XtmIncomeService _xtm = new();
 
     public EconomicsScreen(FleetConfig config, FleetService fleet, MarketService market)
     {
@@ -191,30 +192,51 @@ public sealed class EconomicsScreen
         if (mining.Count == 0) return;
 
         var found = new List<(NodeState Node, GpuPoolStats Stats, double? Price, GpuIncome? Income)>();
+        var xtmFound = new List<(string Nodes, XtmIncome Income, double? Price)>();
         var unreadable = new List<string>();
 
         await AnsiConsole.Status().StartAsync("Reading what the cards earned...", async _ =>
         {
+            var xtmNodes = new List<(string Node, XtmAccount Account)>();
             foreach (var state in mining)
             {
                 using var client = _fleet.CreateClient(state.Node);
                 var config = await SafeConfigAsync(client, ct);
 
-                if (GpuPoolService.TargetFor(ToConfig(config)) is not { } target)
+                if (GpuPoolService.TargetFor(ToConfig(config)) is { } target)
                 {
-                    unreadable.Add(state.Node.Name);
+                    var income = await _gpuIncome.GetAsync(target, ct);
+                    var stats = income?.Stats;
+                    if (stats is null) { unreadable.Add(state.Node.Name); continue; }
+
+                    found.Add((state, stats, await _gpuPool.GetPriceAsync(target, currency, ct), income));
                     continue;
                 }
 
-                var income = await _gpuIncome.GetAsync(target, ct);
-                var stats = income?.Stats;
-                if (stats is null) { unreadable.Add(state.Node.Name); continue; }
+                if (XtmAccount.From(config?.GpuMiner?.PoolUrl, config?.GpuMiner?.User) is { } xtm)
+                {
+                    xtmNodes.Add((state.Node.Name, xtm));
+                    continue;
+                }
 
-                found.Add((state, stats, await _gpuPool.GetPriceAsync(target, currency, ct), income));
+                unreadable.Add(state.Node.Name);
+            }
+
+            if (xtmNodes.Count > 0)
+            {
+                var xtmPrice = await _gpuPool.GetPriceAsync(new GpuPoolTarget("luckypool", "xtm", ""), currency, ct);
+                foreach (var group in xtmNodes.GroupBy(x => x.Account))
+                {
+                    var names = string.Join(", ", group.Select(x => x.Node));
+                    var income = await _xtm.GetAsync(group.Key, ct);
+                    if (income is null) { unreadable.Add(names); continue; }
+
+                    xtmFound.Add((names, income, xtmPrice));
+                }
             }
         });
 
-        if (found.Count == 0 && unreadable.Count == 0) return;
+        if (found.Count == 0 && xtmFound.Count == 0 && unreadable.Count == 0) return;
 
         AnsiConsole.WriteLine();
         var table = new Table().Border(TableBorder.Rounded).BorderColor(Color.Grey35)
@@ -262,6 +284,27 @@ public sealed class EconomicsScreen
                         : "[yellow]too few payouts to say[/]"));
         }
 
+        foreach (var (names, income, price) in xtmFound)
+        {
+            var basis = income.ForecastBasis(now);
+            var perDay = basis is not null ? basis.Amount * 24 / basis.Hours : income.Day?.Amount;
+            double? value = perDay is { } p && price is { } q ? p * q : null;
+            if (value is { } v) valuePerDay = (valuePerDay ?? 0) + v;
+
+            table.AddRow(
+                new Markup(UiHelpers.Escape(names)),
+                new Markup("XTM"),
+                new Markup(perDay is { } d ? $"[aqua]{d:N2}[/]" : "[grey]-[/]"),
+                new Markup(value is null ? $"[grey]price unavailable in {UiHelpers.Escape(currency)}[/]" : money.Markup(value)),
+                new Markup("[grey]-[/]"),
+                new Markup(income.Day is { } day ? $"{day.Amount:N2} [grey](24h)[/]" : "[grey]-[/]"),
+                new Markup(basis is not null
+                    ? $"[grey]{basis.Hours} h pool reward mean[/]"
+                    : income.Day is not null
+                        ? "[grey]last 24 h pool rewards[/]"
+                        : "[yellow]need 24h history[/]"));
+        }
+
         AnsiConsole.Write(table);
 
         if (valuePerDay is { } total)
@@ -275,7 +318,7 @@ public sealed class EconomicsScreen
         {
             AnsiConsole.MarkupLine(
                 $"[yellow]{UiHelpers.Escape(name)}[/] [grey]is mining on a card whose pool this console " +
-                "cannot read. Only Kryptex is understood; the electricity still counts against it.[/]");
+                "cannot read. Only Kryptex and LuckyPool C29 are understood; the electricity still counts against it.[/]");
         }
     }
 

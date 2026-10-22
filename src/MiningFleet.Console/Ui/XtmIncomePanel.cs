@@ -5,24 +5,29 @@ namespace MiningFleet.Console.Ui;
 
 public static class XtmIncomePanel
 {
-    public static IRenderable Render(IReadOnlyList<XtmIncomeRow> rows, DateTimeOffset now)
+    public static IRenderable Render(IReadOnlyList<XtmIncomeRow> rows, DateTimeOffset now, MoneyFormat? money = null)
     {
         // An unknown node is not an XTM account. Keep failures for known accounts visible,
         // but leave unrelated/offline nodes to the main fleet table.
         var wallets = rows.Where(row => row.Account is not null).ToList();
         if (wallets.Count == 0) return new Text("");
+        var format = money ?? MoneyFormat.Single("RUB");
         var table = new Table().Border(TableBorder.Rounded)
             .Title("[bold]XTM — pool wallet income[/]")
             .AddColumn("Nodes / shared wallet")
             .AddColumn("Accrued / last 24h")
             .AddColumn("Forecast / next 24h")
+            .AddColumn("Value / next 24h")
             .AddColumn("Data / basis");
         foreach (var row in wallets)
         {
             var income = row.Income;
             var basis = row.ConfigUnverified ? null : income?.ForecastBasis(now);
+            var perDay = basis is not null ? basis.Amount * 24 / basis.Hours : (double?)null;
             var accrued = income?.Day is { } day ? $"{day.Amount:N2} XTM" : "[grey]unavailable[/]";
-            var forecast = basis is not null ? $"~{basis.Amount * 24 / basis.Hours:N2} XTM"
+            var forecast = perDay is { } f ? $"~{f:N2} XTM" : "[grey]unavailable[/]";
+            var value = perDay is { } p && row.Price is { } price
+                ? "~" + format.Markup(p * price)
                 : "[grey]unavailable[/]";
             string status;
             if (income is null) status = "[yellow]pool unavailable[/]";
@@ -35,7 +40,7 @@ public static class XtmIncomePanel
                 else if (!row.ConfigUnverified) status += " / need 24h history";
             }
             if (row.ConfigUnverified) status += " [yellow]config unverified[/]";
-            table.AddRow(UiHelpers.Escape(row.Nodes), accrued, forecast, status);
+            table.AddRow(UiHelpers.Escape(row.Nodes), accrued, forecast, value, status);
         }
         return new Rows(table, new Markup("[grey]Wallet totals include all workers, once per wallet. "
             + "Accruals include locked rewards. Forecast assumes the same activity and pool conditions; "

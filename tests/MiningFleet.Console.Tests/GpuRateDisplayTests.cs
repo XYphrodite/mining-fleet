@@ -141,4 +141,20 @@ public sealed class GpuRateDisplayTests
 
         Assert.True(string.IsNullOrWhiteSpace(console.Output));
     }
+
+    [Fact]
+    public void The_xtm_income_panel_renders_forecast_value_in_fleet_currency()
+    {
+        var account = XtmAccount.From("taric29.luckypool.io:3111", "wallet")!;
+        var income = new XtmIncome(Now, Now.AddHours(-30), [new XtmRewardWindow(24, 800, Now)]);
+        var money = new MoneyFormat("RUB", "USD", 0.012);
+        var console = new TestConsole();
+        console.Profile.Width = 200;
+
+        console.Write(XtmIncomePanel.Render([new("re-7lqd67ahcm0r", account, income, Price: 0.1)], Now, money));
+
+        Assert.Contains("Value / next 24h", console.Output);
+        Assert.Contains("RUB", console.Output);
+        Assert.Contains("USD", console.Output);
+    }
 }
