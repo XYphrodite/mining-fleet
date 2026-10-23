@@ -527,6 +527,19 @@ public sealed class GpuMinerService : IDisposable
         }
     }
 
+    public string? RunningExecutablePath()
+    {
+        if (FindRunning() is not { } p) return null;
+        try
+        {
+            return p.MainModule?.FileName;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException)
+        {
+            return null;
+        }
+    }
+
     private Process? FindRunning()
     {
         if (_process is { HasExited: false }) return _process;

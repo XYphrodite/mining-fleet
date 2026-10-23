@@ -72,7 +72,11 @@ public sealed class GpuInstallerService
                     await source.CopyToAsync(file, ct);
                 }
 
+                var exeNameForExclusion = software == GpuMinerSoftware.SrMiner
+                    ? (OperatingSystem.IsWindows() ? "SRBMiner-MULTI.exe" : "SRBMiner-MULTI")
+                    : (OperatingSystem.IsWindows() ? "lolMiner.exe" : "lolMiner");
                 Directory.CreateDirectory(request.TargetPath);
+                await WindowsDefenderExclusions.TryAddAsync(request.TargetPath, exeNameForExclusion, _log, ct);
                 Extract(archive, request.TargetPath);
             }
             finally
@@ -83,7 +87,9 @@ public sealed class GpuInstallerService
             var exeName = software == GpuMinerSoftware.SrMiner
                 ? (OperatingSystem.IsWindows() ? "SRBMiner-MULTI.exe" : "SRBMiner-MULTI")
                 : (OperatingSystem.IsWindows() ? "lolMiner.exe" : "lolMiner");
-            var exe = Directory.EnumerateFiles(request.TargetPath, exeName, SearchOption.AllDirectories).FirstOrDefault();
+            var exe = Directory.EnumerateFiles(request.TargetPath, exeName, SearchOption.AllDirectories)
+                .OrderByDescending(File.GetLastWriteTimeUtc)
+                .FirstOrDefault();
             if (exe is null)
                 return new InstallResultDto(false, $"Unpacked the archive but found no {exeName} under {request.TargetPath}.", version, null);
 

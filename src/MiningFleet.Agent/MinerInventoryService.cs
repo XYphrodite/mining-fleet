@@ -110,7 +110,7 @@ public sealed class MinerInventoryService
 
         if (request.Kind == MinerKind.Xmrig)
         {
-            var exe = _miner.ResolveExecutable();
+            var exe = _miner.RunningExecutablePath();
             if (exe is not null && IsInside(exe, full))
             {
                 var stop = await _miner.StopAsync(ct);
@@ -120,7 +120,7 @@ public sealed class MinerInventoryService
         }
         else
         {
-            var exe = _gpu.ResolveExecutable();
+            var exe = _gpu.RunningExecutablePath();
             if (exe is not null && IsInside(exe, full))
             {
                 var stop = await _gpu.StopAsync(ct);

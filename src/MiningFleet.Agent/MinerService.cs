@@ -464,6 +464,8 @@ public sealed class MinerService : IDisposable
         }
     }
 
+    public string? RunningExecutablePath() => FindRunning() is { } p ? TryGetImagePath(p) : null;
+
     private Process? FindRunning()
     {
         if (_process is { HasExited: false }) return _process;

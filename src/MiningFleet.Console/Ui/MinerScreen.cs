@@ -243,7 +243,7 @@ public sealed class MinerScreen
         var nodes = UiHelpers.SelectNodes(_config, "Install on which nodes?");
         if (nodes.Count == 0) return;
 
-        var otherMiner = software == GpuMinerSoftware.SrMiner ? "lolminer" : "srbminer";
+        var otherMiner = software == GpuMinerSoftware.SrMiner ? "lol" : "srb";
         var defaultPath = nodes.Select(n => n.GpuMinerPath)
                               .FirstOrDefault(q => !string.IsNullOrWhiteSpace(q) && !q.Contains(otherMiner, StringComparison.OrdinalIgnoreCase))
                           ?? (software == GpuMinerSoftware.SrMiner

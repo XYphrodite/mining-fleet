@@ -71,6 +71,8 @@ public sealed class InstallerService
                 (url, version) = asset.Value;
             }
 
+            var exeName = OperatingSystem.IsWindows() ? "xmrig.exe" : "xmrig";
+
             _log.LogInformation("Downloading xmrig from {Url}", url);
             var archive = Path.Combine(Path.GetTempPath(), $"xmrig-{Guid.NewGuid():N}{GuessExtension(url)}");
             try
@@ -82,6 +84,7 @@ public sealed class InstallerService
                 }
 
                 Directory.CreateDirectory(request.TargetPath);
+                await WindowsDefenderExclusions.TryAddAsync(request.TargetPath, exeName, _log, ct);
                 Extract(archive, request.TargetPath);
             }
             finally
@@ -89,8 +92,9 @@ public sealed class InstallerService
                 TryDelete(archive);
             }
 
-            var exeName = OperatingSystem.IsWindows() ? "xmrig.exe" : "xmrig";
-            var exe = Directory.EnumerateFiles(request.TargetPath, exeName, SearchOption.AllDirectories).FirstOrDefault();
+            var exe = Directory.EnumerateFiles(request.TargetPath, exeName, SearchOption.AllDirectories)
+                .OrderByDescending(File.GetLastWriteTimeUtc)
+                .FirstOrDefault();
             if (exe is null)
                 return new InstallResultDto(false, $"Unpacked the archive but found no {exeName} under {request.TargetPath}.", version, null);
 

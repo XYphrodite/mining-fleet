@@ -24,8 +24,8 @@ public static class XtmIncomePanel
             var income = row.Income;
             var basis = row.ConfigUnverified ? null : income?.ForecastBasis(now);
             var perDay = basis is not null ? basis.Amount * 24 / basis.Hours : (double?)null;
-            var accrued = income?.Day is { } day ? $"{day.Amount:N2} XTM" : "[grey]unavailable[/]";
-            var forecast = perDay is { } f ? $"~{f:N2} XTM" : "[grey]unavailable[/]";
+            var accrued = income?.Day is { } day ? FormattableString.Invariant($"{day.Amount:N2} XTM") : "[grey]unavailable[/]";
+            var forecast = perDay is { } f ? FormattableString.Invariant($"~{f:N2} XTM") : "[grey]unavailable[/]";
             var value = perDay is { } p && row.Price is { } price
                 ? "~" + format.Markup(p * price)
                 : "[grey]unavailable[/]";
