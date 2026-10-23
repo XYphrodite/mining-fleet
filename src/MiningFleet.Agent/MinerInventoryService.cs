@@ -32,17 +32,18 @@ public sealed class MinerInventoryService
             SizeBytes = xmrigExe is not null ? TrySize(xmrigExe) : null,
         });
 
-        var lolExe = _gpu.ResolveExecutable();
-        var lolConfigured = _config.Current.GpuMiner?.ExecutablePath;
+        var gpuExe = _gpu.ResolveExecutable();
+        var gpuConfigured = _config.Current.GpuMiner?.ExecutablePath;
+        var isSrMiner = _config.Current.GpuMiner?.Miner == GpuMinerSoftware.SrMiner;
         items.Add(new MinerInventoryItemDto
         {
-            Kind = MinerKind.LolMiner,
-            Name = "lolMiner",
-            Installed = lolExe is not null,
-            ExecutablePath = lolExe,
-            ConfiguredPath = lolConfigured,
+            Kind = isSrMiner ? MinerKind.SrMiner : MinerKind.LolMiner,
+            Name = isSrMiner ? "SRBMiner" : "lolMiner",
+            Installed = gpuExe is not null,
+            ExecutablePath = gpuExe,
+            ConfiguredPath = gpuConfigured,
             Version = null,
-            SizeBytes = lolExe is not null ? TrySize(lolExe) : null,
+            SizeBytes = gpuExe is not null ? TrySize(gpuExe) : null,
         });
 
         return items;
@@ -124,7 +125,7 @@ public sealed class MinerInventoryService
             {
                 var stop = await _gpu.StopAsync(ct);
                 if (!stop.Ok && !stop.Message.Contains("not running", StringComparison.OrdinalIgnoreCase))
-                    return new UninstallResultDto(false, $"Could not stop lolMiner: {stop.Message}");
+                    return new UninstallResultDto(false, $"Could not stop GPU miner: {stop.Message}");
             }
         }
 

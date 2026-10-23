@@ -85,14 +85,16 @@ public sealed class MinerScreen
 
         var choice = AnsiConsole.Prompt(UiHelpers.Menu("Action", "< back",
                 "Install / update xmrig (CPU)",
-                "Install / update lolMiner (GPU)",
+                "Install / update lolMiner (GPU, Tari CR29)",
+                "Install / update SRBMiner (GPU, Pearl)",
                 "Remove miner",
                 "< back"));
 
         switch (choice)
         {
             case "Install / update xmrig (CPU)": await InstallAsync(ct); break;
-            case "Install / update lolMiner (GPU)": await InstallGpuAsync(ct); break;
+            case "Install / update lolMiner (GPU, Tari CR29)": await InstallGpuAsync(GpuMinerSoftware.LolMiner, ct); break;
+            case "Install / update SRBMiner (GPU, Pearl)": await InstallGpuAsync(GpuMinerSoftware.SrMiner, ct); break;
             case "Remove miner": await RemoveMinerAsync(ct); break;
             default: break;
         }
@@ -228,21 +230,18 @@ public sealed class MinerScreen
         UiHelpers.Pause();
     }
 
-    private async Task InstallGpuAsync(CancellationToken ct)
+    private async Task InstallGpuAsync(GpuMinerSoftware software, CancellationToken ct)
     {
-        UiHelpers.Header("Install / update GPU miner");
+        UiHelpers.Header(software == GpuMinerSoftware.SrMiner
+            ? "Install / update SRBMiner (GPU, Pearl)"
+            : "Install / update lolMiner (GPU, Tari CR29)");
 
         var nodes = UiHelpers.SelectNodes(_config, "Install on which nodes?");
         if (nodes.Count == 0) return;
 
-        var which = AnsiConsole.Prompt(UiHelpers.Menu("Which GPU miner", "< back",
-            "lolMiner (Tari CR29)",
-            "SRBMiner (Pearl / pearlhash)",
-            "< back"));
-        if (which == "< back") return;
-        var software = which.Contains("SRB") ? GpuMinerSoftware.SrMiner : GpuMinerSoftware.LolMiner;
-
-        var defaultPath = nodes.Select(n => n.GpuMinerPath).FirstOrDefault(q => !string.IsNullOrWhiteSpace(q))
+        var otherMiner = software == GpuMinerSoftware.SrMiner ? "lolminer" : "srbminer";
+        var defaultPath = nodes.Select(n => n.GpuMinerPath)
+                              .FirstOrDefault(q => !string.IsNullOrWhiteSpace(q) && !q.Contains(otherMiner, StringComparison.OrdinalIgnoreCase))
                           ?? (software == GpuMinerSoftware.SrMiner
                               ? (OperatingSystem.IsWindows() ? @"C:\mining\srbminer" : "/opt/srbminer")
                               : (OperatingSystem.IsWindows() ? @"C:\mining\lolMiner" : "/opt/lolMiner"));
@@ -310,9 +309,9 @@ public sealed class MinerScreen
         var nodes = UiHelpers.SelectNodes(_config, "Remove from which nodes?");
         if (nodes.Count == 0) return;
 
-        var which = AnsiConsole.Prompt(UiHelpers.Menu("Which miner", "< back", "xmrig (CPU)", "lolMiner (GPU)", "< back"));
+        var which = AnsiConsole.Prompt(UiHelpers.Menu("Which miner", "< back", "xmrig (CPU)", "lolMiner (GPU)", "SRBMiner (GPU, Pearl)", "< back"));
         if (which == "< back") return;
-        var kind = which.Contains("xmrig") ? MinerKind.Xmrig : MinerKind.LolMiner;
+        var kind = which.Contains("xmrig") ? MinerKind.Xmrig : which.Contains("SRBMiner") ? MinerKind.SrMiner : MinerKind.LolMiner;
 
         var previews = new List<(NodeConfig Node, DirListingDto? Listing, string? Error)>();
         await AnsiConsole.Status().StartAsync("Reading directories...", async _ =>
@@ -326,7 +325,7 @@ public sealed class MinerScreen
                     {
                         using var c = _fleet.CreateClient(node, TimeSpan.FromSeconds(8));
                         var inv = await c.GetMinersAsync(ct);
-                        var item = inv?.FirstOrDefault(i => i.Kind == kind);
+                        var item = inv?.FirstOrDefault(i => i.Kind == kind || (kind != MinerKind.Xmrig && i.Kind != MinerKind.Xmrig));
                         path = item?.ExecutablePath ?? item?.ConfiguredPath ?? path;
                         if (!string.IsNullOrWhiteSpace(path) && File.Exists(path)) path = Path.GetDirectoryName(path);
                     }
@@ -390,7 +389,7 @@ public sealed class MinerScreen
                         {
                             using var cc = _fleet.CreateClient(node, TimeSpan.FromSeconds(8));
                             var inv = await cc.GetMinersAsync(ct);
-                            var item = inv?.FirstOrDefault(i => i.Kind == kind);
+                            var item = inv?.FirstOrDefault(i => i.Kind == kind || (kind != MinerKind.Xmrig && i.Kind != MinerKind.Xmrig));
                             path = item?.ExecutablePath ?? item?.ConfiguredPath;
                             if (!string.IsNullOrWhiteSpace(path) && File.Exists(path)) path = Path.GetDirectoryName(path);
                         }
@@ -726,12 +725,12 @@ public sealed class MinerScreen
         AnsiConsole.MarkupLine($"[grey]Current: {(cur.Enabled == true ? cur.Algorithm : "off")} on {UiHelpers.Escape(cur.PoolUrl ?? "-")} as {UiHelpers.Escape(cur.User ?? "-")}[/]");
         if (cur.Enabled != true) AnsiConsole.MarkupLine("[yellow]Fleet is off — blank leaves pool/user empty and nodes will still show 'no algorithm on no pool'. Type values now.[/]");
         var enabled = AnsiConsole.Confirm("Enable GPU mining by default?", cur.Enabled == true);
-        var algo = AnsiConsole.Prompt(UiHelpers.Text("Algorithm (CR29, NEXA, blank = keep):").AllowEmpty().DefaultValue(cur.Algorithm ?? ""));
+        var algo = AnsiConsole.Prompt(UiHelpers.Text("Algorithm (CR29, pearlhash, NEXA, blank = keep):").AllowEmpty().DefaultValue(cur.Algorithm ?? ""));
         var pool = AnsiConsole.Prompt(UiHelpers.Text("Pool host:port (blank = keep):").AllowEmpty().DefaultValue(cur.PoolUrl ?? ""));
         var user = AnsiConsole.Prompt(UiHelpers.Text("Pool user (address/worker, blank = keep):").AllowEmpty().DefaultValue(cur.User ?? ""));
         if (enabled && string.IsNullOrWhiteSpace(algo) && string.IsNullOrWhiteSpace(cur.Algorithm))
         {
-            UiHelpers.Result(false, "Enabled but no algorithm — type CR29 (3060 12GB) or NEXA (4GB). Not saved.");
+            UiHelpers.Result(false, "Enabled but no algorithm — type CR29, pearlhash, or NEXA. Not saved.");
             UiHelpers.Pause(); return;
         }
         if (enabled && string.IsNullOrWhiteSpace(pool) && string.IsNullOrWhiteSpace(cur.PoolUrl ?? ""))
@@ -745,7 +744,7 @@ public sealed class MinerScreen
             UiHelpers.Pause(); return;
         }
         _config.GpuMiner.Enabled = enabled;
-        if (!string.IsNullOrWhiteSpace(algo)) _config.GpuMiner.Algorithm = algo.Trim();
+        if (!string.IsNullOrWhiteSpace(algo)) { _config.GpuMiner.Algorithm = algo.Trim(); if (InferGpuSoftware(_config.GpuMiner.Algorithm) is { } m) _config.GpuMiner.Miner = m; }
         if (!string.IsNullOrWhiteSpace(pool)) _config.GpuMiner.PoolUrl = pool.Trim();
         if (!string.IsNullOrWhiteSpace(user)) _config.GpuMiner.User = user.Trim();
         _config.Save();
@@ -774,13 +773,13 @@ public sealed class MinerScreen
         var fleetAlgo = _config.GpuMiner.Algorithm ?? hint.Algorithm ?? "";
         var fleetPool = _config.GpuMiner.PoolUrl ?? hint.PoolUrl ?? "";
         var fleetUser = _config.GpuMiner.User ?? hint.User ?? "";
-        var algo = AnsiConsole.Prompt(UiHelpers.Text($"Algorithm (CR29/NEXA, blank = inherit '{UiHelpers.Escape(fleetAlgo != "" ? fleetAlgo : "—")}'):").AllowEmpty().DefaultValue(""));
+        var algo = AnsiConsole.Prompt(UiHelpers.Text($"Algorithm (CR29/pearlhash/NEXA, blank = inherit '{UiHelpers.Escape(fleetAlgo != "" ? fleetAlgo : "—")}'):").AllowEmpty().DefaultValue(""));
         var pool = AnsiConsole.Prompt(UiHelpers.Text($"Pool host:port (blank = inherit '{UiHelpers.Escape(fleetPool != "" ? fleetPool : "—")}'):").AllowEmpty().DefaultValue(""));
         var user = AnsiConsole.Prompt(UiHelpers.Text($"Pool user (blank = inherit '{UiHelpers.Escape(fleetUser != "" ? fleetUser : "—")}'):").AllowEmpty().DefaultValue(""));
         // Snapshot to allow revert when validation fails
         var snapshot = nodes.ToDictionary(n => n.Name, n => n.GpuMiner is null ? null : new GpuMinerConfig
         {
-            Enabled = n.GpuMiner.Enabled, Algorithm = n.GpuMiner.Algorithm, PoolUrl = n.GpuMiner.PoolUrl, User = n.GpuMiner.User,
+            Enabled = n.GpuMiner.Enabled, Miner = n.GpuMiner.Miner, Algorithm = n.GpuMiner.Algorithm, PoolUrl = n.GpuMiner.PoolUrl, User = n.GpuMiner.User,
             Password = n.GpuMiner.Password, ApiPort = n.GpuMiner.ApiPort, RunInInteractiveSession = n.GpuMiner.RunInInteractiveSession,
             PauseWhile = n.GpuMiner.PauseWhile is null ? null : new GpuPauseConfig{ TcpPort = n.GpuMiner.PauseWhile.TcpPort, ProcessName = n.GpuMiner.PauseWhile.ProcessName, ProcessNames = n.GpuMiner.PauseWhile.ProcessNames?.ToList(), QuietSeconds = n.GpuMiner.PauseWhile.QuietSeconds }
         });
@@ -789,7 +788,7 @@ public sealed class MinerScreen
             n.GpuMiner ??= new GpuMinerConfig();
             if (enabled is not null) n.GpuMiner.Enabled = enabled;
             else if (enabledChoice == "inherit fleet") n.GpuMiner.Enabled = null;
-            if (!string.IsNullOrWhiteSpace(algo)) n.GpuMiner.Algorithm = algo.Trim();
+            if (!string.IsNullOrWhiteSpace(algo)) { n.GpuMiner.Algorithm = algo.Trim(); if (InferGpuSoftware(n.GpuMiner.Algorithm) is { } m) n.GpuMiner.Miner = m; }
             if (!string.IsNullOrWhiteSpace(pool)) n.GpuMiner.PoolUrl = pool.Trim();
             if (!string.IsNullOrWhiteSpace(user)) n.GpuMiner.User = user.Trim();
         }
@@ -834,7 +833,7 @@ public sealed class MinerScreen
     {
         var node = UiHelpers.SelectNode(_config, "GPU log from which node?");
         if (node is null) return;
-        UiHelpers.Header($"{node.Name} - lolMiner output");
+        UiHelpers.Header($"{node.Name} - GPU miner output");
         using var client = _fleet.CreateClient(node, TimeSpan.FromSeconds(15));
         try
         {
@@ -848,6 +847,14 @@ public sealed class MinerScreen
         }
         UiHelpers.Pause();
     }
+
+    public static GpuMinerSoftware? InferGpuSoftware(string? algorithm) =>
+        algorithm?.Trim().ToLowerInvariant() switch
+        {
+            "pearlhash" => GpuMinerSoftware.SrMiner,
+            "cr29" or "c29" or "nexa" => GpuMinerSoftware.LolMiner,
+            _ => null,
+        };
 
     private async Task LogsAsync(CancellationToken ct)
     {

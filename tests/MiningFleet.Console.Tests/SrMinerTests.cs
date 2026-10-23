@@ -157,6 +157,15 @@ public sealed class SrMinerTests
         Assert.Equal("prl", target.Coin);
         Assert.Equal("prl1address", target.Address);
     }
+
+    [Theory]
+    [InlineData("pearlhash", GpuMinerSoftware.SrMiner)]
+    [InlineData("CR29", GpuMinerSoftware.LolMiner)]
+    [InlineData("NEXA", GpuMinerSoftware.LolMiner)]
+    public void Algorithm_selects_the_matching_gpu_miner_binary(string algorithm, GpuMinerSoftware expected)
+    {
+        Assert.Equal(expected, MiningFleet.Console.Ui.MinerScreen.InferGpuSoftware(algorithm));
+    }
 }
 
 /// <summary>Exposes pure helpers for tests without opening a process.</summary>
