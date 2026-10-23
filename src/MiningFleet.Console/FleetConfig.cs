@@ -67,6 +67,12 @@ public sealed class FleetConfig
     /// </summary>
     public GpuMinerConfig GpuMiner { get; set; } = new() { PauseWhile = new() { ProcessNames = ["cs2", "dota2", "deadlock", "r5apex", "javaw", "Minecraft"], QuietSeconds = 300 } };
 
+    /// <summary>
+    /// Remembered pool and wallet per GPU algorithm (CR29, pearlhash, NEXA) so switching a node
+    /// between coins prefills the right pool and wallet without retyping them.
+    /// </summary>
+    public Dictionary<string, GpuCoinProfile> GpuProfiles { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
     public List<NodeConfig> Nodes { get; set; } = [];
 
     [JsonIgnore]
@@ -266,6 +272,94 @@ public sealed class FleetConfig
 
         return resolved.NamesACondition ? resolved : null;
     }
+
+    public GpuCoinProfile ResolveGpuProfile(string algorithm, IEnumerable<GpuMinerSettingsDto?>? liveNodeConfigs = null)
+    {
+        var key = algorithm.Trim();
+        var software = key.Equals("pearlhash", StringComparison.OrdinalIgnoreCase)
+            ? GpuMinerSoftware.SrMiner
+            : GpuMinerSoftware.LolMiner;
+
+        string? pool = null;
+        string? wallet = null;
+
+        if (GpuProfiles.TryGetValue(key, out var saved))
+        {
+            if (!string.IsNullOrWhiteSpace(saved.PoolUrl)) pool = saved.PoolUrl;
+            if (!string.IsNullOrWhiteSpace(saved.Wallet)) wallet = saved.Wallet;
+        }
+
+        var localCandidates = Nodes.Select(n => n.GpuMiner).Prepend(GpuMiner)
+            .Where(g => g is not null && string.Equals(g.Algorithm, key, StringComparison.OrdinalIgnoreCase));
+        foreach (var g in localCandidates)
+        {
+            pool ??= string.IsNullOrWhiteSpace(g!.PoolUrl) ? null : g.PoolUrl;
+            wallet ??= WalletBase(g!.User);
+        }
+
+        if (liveNodeConfigs is not null)
+        {
+            foreach (var g in liveNodeConfigs.Where(g => g is not null && string.Equals(g.Algorithm, key, StringComparison.OrdinalIgnoreCase)))
+            {
+                pool ??= string.IsNullOrWhiteSpace(g!.PoolUrl) ? null : g.PoolUrl;
+                wallet ??= WalletBase(g!.User);
+            }
+        }
+
+        pool ??= key.ToLowerInvariant() switch
+        {
+            "pearlhash" => "prl.kryptex.network:7048",
+            "cr29" or "c29" => "taric29.luckypool.io:3111",
+            "nexa" => "nexa.kryptex.network:7777",
+            _ => "",
+        };
+
+        return new GpuCoinProfile
+        {
+            Miner = software,
+            Algorithm = key,
+            PoolUrl = pool,
+            Wallet = wallet ?? "",
+        };
+    }
+
+    public void RememberGpuProfile(string? algorithm, string? poolUrl, string? userOrWallet)
+    {
+        if (string.IsNullOrWhiteSpace(algorithm)) return;
+        var key = algorithm.Trim();
+        var wallet = WalletBase(userOrWallet);
+        if (string.IsNullOrWhiteSpace(poolUrl) && string.IsNullOrWhiteSpace(wallet)) return;
+
+        var existing = GpuProfiles.TryGetValue(key, out var prev) ? prev : new GpuCoinProfile { Algorithm = key };
+        existing.Algorithm = key;
+        existing.Miner = key.Equals("pearlhash", StringComparison.OrdinalIgnoreCase)
+            ? GpuMinerSoftware.SrMiner
+            : GpuMinerSoftware.LolMiner;
+        if (!string.IsNullOrWhiteSpace(poolUrl)) existing.PoolUrl = poolUrl.Trim();
+        if (!string.IsNullOrWhiteSpace(wallet)) existing.Wallet = wallet;
+        GpuProfiles[key] = existing;
+    }
+
+    public static string? WalletBase(string? user)
+    {
+        if (string.IsNullOrWhiteSpace(user)) return null;
+        var basePart = user.Split('/', '.')[0].Trim();
+        return basePart.Length == 0 ? null : basePart;
+    }
+
+    public static string FormatPoolUser(string walletOrUser, string nodeName)
+    {
+        var wallet = WalletBase(walletOrUser) ?? walletOrUser.Trim();
+        return string.IsNullOrWhiteSpace(nodeName) ? wallet : $"{wallet}/{nodeName}";
+    }
+}
+
+public sealed class GpuCoinProfile
+{
+    public GpuMinerSoftware? Miner { get; set; }
+    public string Algorithm { get; set; } = "";
+    public string PoolUrl { get; set; } = "";
+    public string Wallet { get; set; } = "";
 }
 
 /// <summary>

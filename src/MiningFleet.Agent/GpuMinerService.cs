@@ -64,18 +64,68 @@ public sealed class GpuMinerService : IDisposable
     {
         var settings = _config.Current.GpuMiner;
         var configured = settings?.ExecutablePath;
-        if (string.IsNullOrWhiteSpace(configured)) return null;
+        var software = SoftwareOf(settings);
+        var wantedExe = ExeName(software);
+        var otherExe = ExeName(software == GpuMinerSoftware.SrMiner ? GpuMinerSoftware.LolMiner : GpuMinerSoftware.SrMiner);
 
-        if (File.Exists(configured)) return configured;
-        if (Directory.Exists(configured))
+        if (!string.IsNullOrWhiteSpace(configured))
         {
-            var name = ExeName(SoftwareOf(settings));
-            var candidate = Path.Combine(configured, name);
-            if (File.Exists(candidate)) return candidate;
-            return Directory.EnumerateFiles(configured, name, SearchOption.AllDirectories).FirstOrDefault();
+            if (File.Exists(configured)
+                && !string.Equals(Path.GetFileName(configured), otherExe, StringComparison.OrdinalIgnoreCase))
+            {
+                return configured;
+            }
+
+            if (Directory.Exists(configured) && FindInDirectory(configured, wantedExe) is { } inConfiguredDir)
+                return inConfiguredDir;
+
+            var sibling = SiblingMinerDirectory(configured, software);
+            if (sibling is not null && Directory.Exists(sibling) && FindInDirectory(sibling, wantedExe) is { } inSibling)
+                return inSibling;
+
+            var defaultDir = DefaultInstallDirectory(software);
+            if (Directory.Exists(defaultDir) && FindInDirectory(defaultDir, wantedExe) is { } inDefault)
+                return inDefault;
+        }
+
+        return null;
+    }
+
+    private static string? FindInDirectory(string directory, string exeName)
+    {
+        var candidate = Path.Combine(directory, exeName);
+        if (File.Exists(candidate)) return candidate;
+        return Directory.EnumerateFiles(directory, exeName, SearchOption.AllDirectories).FirstOrDefault();
+    }
+
+    private static string? SiblingMinerDirectory(string configuredPath, GpuMinerSoftware software)
+    {
+        try
+        {
+            var dir = File.Exists(configuredPath) ? Path.GetDirectoryName(configuredPath) : configuredPath;
+            for (var depth = 0; depth < 4 && !string.IsNullOrWhiteSpace(dir); depth++)
+            {
+                var leaf = Path.GetFileName(dir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+                if (leaf.Equals("lolminer", StringComparison.OrdinalIgnoreCase)
+                    || leaf.Equals("srbminer", StringComparison.OrdinalIgnoreCase))
+                {
+                    var parent = Path.GetDirectoryName(dir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+                    if (!string.IsNullOrWhiteSpace(parent))
+                        return Path.Combine(parent, software == GpuMinerSoftware.SrMiner ? "srbminer" : "lolMiner");
+                }
+                dir = Path.GetDirectoryName(dir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            }
+        }
+        catch (Exception ex) when (ex is ArgumentException or PathTooLongException)
+        {
         }
         return null;
     }
+
+    private static string DefaultInstallDirectory(GpuMinerSoftware software) =>
+        software == GpuMinerSoftware.SrMiner
+            ? (OperatingSystem.IsWindows() ? @"C:\mining\srbminer" : "/opt/srbminer")
+            : (OperatingSystem.IsWindows() ? @"C:\mining\lolMiner" : "/opt/lolMiner");
 
     private static GpuMinerSoftware SoftwareOf(GpuMinerSettingsDto? settings) =>
         settings?.Miner ?? GpuMinerSoftware.LolMiner;

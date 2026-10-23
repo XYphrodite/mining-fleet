@@ -68,6 +68,7 @@ public sealed class MinerScreen
                 "Start mining",
                 "Stop mining",
                 "Restart mining",
+                "Switch GPU coin / algorithm...",
                 "< back"));
 
         switch (choice)
@@ -75,6 +76,7 @@ public sealed class MinerScreen
             case "Start mining": await RunGpuAsync("start", (c, t) => c.GpuStartAsync(t), ct); break;
             case "Stop mining": await RunGpuAsync("stop", (c, t) => c.GpuStopAsync(t), ct); break;
             case "Restart mining": await RunGpuAsync("restart", (c, t) => c.GpuRestartAsync(t), ct); break;
+            case "Switch GPU coin / algorithm...": await SwitchGpuAlgorithmAsync(ct); break;
             default: break;
         }
     }
@@ -109,6 +111,7 @@ public sealed class MinerScreen
                 "Start mining when the node boots",
                 "Power limit while the PC is in use",
                 "Session monitor (hashrate workaround)",
+                "GPU: switch coin / algorithm...",
                 "GPU: fleet defaults",
                 "GPU: per-node settings",
                 "< back"));
@@ -119,6 +122,7 @@ public sealed class MinerScreen
             case "Start mining when the node boots": await AutoStartAsync(ct); break;
             case "Power limit while the PC is in use": await ThrottleAsync(ct); break;
             case "Session monitor (hashrate workaround)": await SessionMonitorAsync(ct); break;
+            case "GPU: switch coin / algorithm...": await SwitchGpuAlgorithmAsync(ct); break;
             case "GPU: fleet defaults": await ConfigureFleetGpuAsync(ct); break;
             case "GPU: per-node settings": await ConfigureNodesGpuAsync(ct); break;
             default: break;
@@ -747,6 +751,7 @@ public sealed class MinerScreen
         if (!string.IsNullOrWhiteSpace(algo)) { _config.GpuMiner.Algorithm = algo.Trim(); if (InferGpuSoftware(_config.GpuMiner.Algorithm) is { } m) _config.GpuMiner.Miner = m; }
         if (!string.IsNullOrWhiteSpace(pool)) _config.GpuMiner.PoolUrl = pool.Trim();
         if (!string.IsNullOrWhiteSpace(user)) _config.GpuMiner.User = user.Trim();
+        _config.RememberGpuProfile(_config.GpuMiner.Algorithm, _config.GpuMiner.PoolUrl, _config.GpuMiner.User);
         _config.Save();
         var enabledNodes = _config.Nodes.Where(n => n.Enabled).ToList();
         if (enabledNodes.Count == 0) { AnsiConsole.MarkupLine("[yellow]No enabled nodes to push to.[/]"); UiHelpers.Pause(); return; }
@@ -791,6 +796,8 @@ public sealed class MinerScreen
             if (!string.IsNullOrWhiteSpace(algo)) { n.GpuMiner.Algorithm = algo.Trim(); if (InferGpuSoftware(n.GpuMiner.Algorithm) is { } m) n.GpuMiner.Miner = m; }
             if (!string.IsNullOrWhiteSpace(pool)) n.GpuMiner.PoolUrl = pool.Trim();
             if (!string.IsNullOrWhiteSpace(user)) n.GpuMiner.User = user.Trim();
+            var resolved = _config.GpuMinerFor(n);
+            _config.RememberGpuProfile(resolved.Algorithm, resolved.PoolUrl, resolved.User);
         }
         var missing = nodes.Where(n =>
         {
@@ -811,6 +818,92 @@ public sealed class MinerScreen
         var results = await _fleet.PushGpuMinerAsync(nodes, ct);
         foreach (var (node, res) in results.OrderBy(r => r.Node.Name, StringComparer.OrdinalIgnoreCase))
             UiHelpers.Result(res.Ok, $"{node.Name}: {res.Message}");
+        UiHelpers.Pause();
+    }
+
+    private async Task SwitchGpuAlgorithmAsync(CancellationToken ct)
+    {
+        UiHelpers.Header("Switch GPU coin / algorithm");
+
+        var nodes = UiHelpers.SelectNodes(_config, "Switch GPU algorithm on which nodes?");
+        if (nodes.Count == 0) return;
+
+        var choice = AnsiConsole.Prompt(UiHelpers.Menu("Target GPU coin / algorithm", "< back",
+            "Pearl (PRL) — pearlhash (SRBMiner)",
+            "Tari (XTM) — CR29 (lolMiner)",
+            "Nexa (NEXA) — NEXA (lolMiner)",
+            "< back"));
+        if (choice == "< back") return;
+
+        var (algorithm, software) = choice switch
+        {
+            var c when c.Contains("pearlhash") => ("pearlhash", GpuMinerSoftware.SrMiner),
+            var c when c.Contains("NEXA") => ("NEXA", GpuMinerSoftware.LolMiner),
+            _ => ("CR29", GpuMinerSoftware.LolMiner),
+        };
+
+        var liveConfigs = new List<GpuMinerSettingsDto?>();
+        await AnsiConsole.Status().StartAsync("Reading known pool and wallet profiles...", async _ =>
+        {
+            var tasks = _fleet.EnabledNodes.Select(async n =>
+            {
+                try
+                {
+                    using var c = _fleet.CreateClient(n, TimeSpan.FromSeconds(5));
+                    var cfg = await c.GetConfigAsync(ct);
+                    if (cfg?.GpuMiner is not null)
+                    {
+                        lock (liveConfigs) liveConfigs.Add(cfg.GpuMiner);
+                    }
+                }
+                catch { }
+            });
+            await Task.WhenAll(tasks);
+        });
+
+        foreach (var g in liveConfigs)
+            _config.RememberGpuProfile(g?.Algorithm, g?.PoolUrl, g?.User);
+
+        var profile = _config.ResolveGpuProfile(algorithm, liveConfigs);
+        var pool = AnsiConsole.Prompt(UiHelpers.Text("Pool host:port:").DefaultValue(profile.PoolUrl)).Trim();
+        var wallet = AnsiConsole.Prompt(UiHelpers.Text("Wallet address (worker name is added per node):").DefaultValue(profile.Wallet)).Trim();
+
+        if (string.IsNullOrWhiteSpace(pool) || string.IsNullOrWhiteSpace(wallet))
+        {
+            UiHelpers.Result(false, "Both pool and wallet address are required.");
+            UiHelpers.Pause();
+            return;
+        }
+
+        _config.RememberGpuProfile(algorithm, pool, wallet);
+        foreach (var n in nodes)
+        {
+            n.GpuMiner ??= new GpuMinerConfig();
+            n.GpuMiner.Enabled = true;
+            n.GpuMiner.Miner = software;
+            n.GpuMiner.Algorithm = algorithm;
+            n.GpuMiner.PoolUrl = pool;
+            n.GpuMiner.User = FleetConfig.FormatPoolUser(wallet, n.Name);
+        }
+        _config.Save();
+
+        var pushed = await AnsiConsole.Status().StartAsync("Pushing GPU settings...", async _ =>
+            await _fleet.PushGpuMinerAsync(nodes, ct));
+        foreach (var (node, res) in pushed.OrderBy(r => r.Node.Name, StringComparer.OrdinalIgnoreCase))
+            UiHelpers.Result(res.Ok, $"{node.Name}: {res.Message}");
+
+        AnsiConsole.WriteLine();
+        if (AnsiConsole.Confirm($"Restart GPU miner on {nodes.Count} node(s) now to switch to {algorithm}?", defaultValue: true))
+        {
+            IReadOnlyList<(NodeConfig Node, CommandResultDto Result)> restarted = [];
+            await AnsiConsole.Status().StartAsync($"Restarting GPU miner on {nodes.Count} node(s)...", async _ =>
+            {
+                restarted = await _fleet.ForEachAsync(nodes, (c, t) => c.GpuRestartAsync(t), ct);
+            });
+            foreach (var (node, res) in restarted.OrderBy(r => r.Node.Name, StringComparer.OrdinalIgnoreCase))
+                UiHelpers.Result(res.Ok, $"{node.Name}: {res.Message}");
+        }
+
         UiHelpers.Pause();
     }
 

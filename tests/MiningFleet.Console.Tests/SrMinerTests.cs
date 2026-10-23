@@ -166,6 +166,77 @@ public sealed class SrMinerTests
     {
         Assert.Equal(expected, MiningFleet.Console.Ui.MinerScreen.InferGpuSoftware(algorithm));
     }
+
+    [Fact]
+    public void Switching_software_resolves_the_other_miner_from_its_sibling_folder()
+    {
+        using var dir = new TempDirectory();
+        var lolDir = Path.Combine(dir.Path, "lolMiner", "1.98");
+        var srbDir = Path.Combine(dir.Path, "srbminer", "SRBMiner-Multi-3-6-1");
+        Directory.CreateDirectory(lolDir);
+        Directory.CreateDirectory(srbDir);
+
+        var lolExe = Path.Combine(lolDir, OperatingSystem.IsWindows() ? "lolMiner.exe" : "lolMiner");
+        var srbExe = Path.Combine(srbDir, OperatingSystem.IsWindows() ? "SRBMiner-MULTI.exe" : "SRBMiner-MULTI");
+        File.WriteAllText(lolExe, "lol");
+        File.WriteAllText(srbExe, "srb");
+
+        var store = Store(dir);
+        store.Update(new MinerConfigDto
+        {
+            GpuMiner = new GpuMinerSettingsDto
+            {
+                Miner = GpuMinerSoftware.LolMiner,
+                ExecutablePath = lolExe,
+            },
+        });
+
+        using var gpu = new GpuMinerService(store, NullLogger<GpuMinerService>.Instance);
+        Assert.Equal(lolExe, gpu.ResolveExecutable());
+
+        // Flip to SRBMiner without reinstalling: must find SRBMiner-MULTI in the sibling folder.
+        store.Update(new MinerConfigDto
+        {
+            GpuMiner = new GpuMinerSettingsDto { Miner = GpuMinerSoftware.SrMiner },
+        });
+        Assert.Equal(srbExe, gpu.ResolveExecutable());
+    }
+
+    [Fact]
+    public void Gpu_profile_reuses_known_pool_and_wallet_for_each_coin_and_replaces_worker_suffix()
+    {
+        var config = new MiningFleet.Console.FleetConfig();
+        config.Nodes.Add(new MiningFleet.Console.NodeConfig
+        {
+            Name = "re-7lqd67ahcm0r",
+            GpuMiner = new MiningFleet.Console.GpuMinerConfig
+            {
+                Algorithm = "CR29",
+                PoolUrl = "taric29.luckypool.io:3111",
+                User = "xtmWalletAddress/re-7lqd67ahcm0r",
+            },
+        });
+
+        var livePearl = new GpuMinerSettingsDto
+        {
+            Miner = GpuMinerSoftware.SrMiner,
+            Algorithm = "pearlhash",
+            PoolUrl = "prl.kryptex.network:7048",
+            User = "prlWalletAddress/mks68i7rtx",
+        };
+
+        var prlProfile = config.ResolveGpuProfile("pearlhash", [livePearl]);
+        Assert.Equal(GpuMinerSoftware.SrMiner, prlProfile.Miner);
+        Assert.Equal("prl.kryptex.network:7048", prlProfile.PoolUrl);
+        Assert.Equal("prlWalletAddress", prlProfile.Wallet);
+        Assert.Equal("prlWalletAddress/rig-2", MiningFleet.Console.FleetConfig.FormatPoolUser(prlProfile.Wallet, "rig-2"));
+
+        var xtmProfile = config.ResolveGpuProfile("CR29");
+        Assert.Equal(GpuMinerSoftware.LolMiner, xtmProfile.Miner);
+        Assert.Equal("taric29.luckypool.io:3111", xtmProfile.PoolUrl);
+        Assert.Equal("xtmWalletAddress", xtmProfile.Wallet);
+        Assert.Equal("xtmWalletAddress/mks68i7rtx", MiningFleet.Console.FleetConfig.FormatPoolUser(xtmProfile.Wallet, "mks68i7rtx"));
+    }
 }
 
 /// <summary>Exposes pure helpers for tests without opening a process.</summary>
