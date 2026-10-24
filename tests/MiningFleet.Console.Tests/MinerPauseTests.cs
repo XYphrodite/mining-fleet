@@ -144,6 +144,8 @@ public sealed class MinerPauseTests
         Assert.Contains("dota2", cpu.Processes);
         Assert.Contains("deadlock", cpu.Processes);
         Assert.Contains("r5apex", cpu.Processes);
+        Assert.Contains("RustClient", cpu.Processes);
+        Assert.Contains("rust", cpu.Processes);
         // Minecraft runs as javaw (TLauncher and the official launcher both).
         Assert.Contains("javaw", cpu.Processes);
         Assert.Contains("Minecraft", cpu.Processes);
@@ -152,6 +154,8 @@ public sealed class MinerPauseTests
         Assert.Contains("dota2", gpu.Processes);
         Assert.Contains("deadlock", gpu.Processes);
         Assert.Contains("r5apex", gpu.Processes);
+        Assert.Contains("RustClient", gpu.Processes);
+        Assert.Contains("rust", gpu.Processes);
         Assert.Contains("javaw", gpu.Processes);
         Assert.Contains("Minecraft", gpu.Processes);
     }

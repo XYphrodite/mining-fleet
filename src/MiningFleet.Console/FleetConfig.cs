@@ -47,11 +47,11 @@ public sealed class FleetConfig
 
     /// <summary>
     /// Fleet-wide rule for stopping CPU mining while somebody is at the machine. Nodes override it.
-    /// Uniform across all nodes — cs2/dota2/deadlock/r5apex and Minecraft (javaw) pause CPU and
+    /// Uniform across all nodes — cs2/dota2/deadlock/r5apex/Rust (RustClient) and Minecraft (javaw) pause CPU and
     /// GPU mining fleet-wide. Minecraft has no dedicated image name: TLauncher and the official
     /// launcher both run it as javaw.exe, so that is what the rule watches.
     /// </summary>
-    public GpuPauseConfig? PauseWhile { get; set; } = new() { ProcessNames = ["cs2", "dota2", "deadlock", "r5apex", "javaw", "Minecraft"], QuietSeconds = 300 };
+    public GpuPauseConfig? PauseWhile { get; set; } = new() { ProcessNames = ["cs2", "dota2", "deadlock", "r5apex", "RustClient", "rust", "javaw", "Minecraft"], QuietSeconds = 300 };
 
     /// <summary>
     /// Fleet-wide rule for throttling (not stopping) CPU/GPU mining for light games like DST.
@@ -62,10 +62,10 @@ public sealed class FleetConfig
     /// <summary>
     /// Fleet-wide GPU mining defaults. Mostly a place to keep the pause rule and the pool login;
     /// the algorithm usually belongs on the node, because it is a property of the card.
-    /// Uniform pause rule across all nodes — any node hands its card to cs2/dota2/deadlock/r5apex
+    /// Uniform pause rule across all nodes — any node hands its card to cs2/dota2/deadlock/r5apex/Rust
     /// and Minecraft (javaw).
     /// </summary>
-    public GpuMinerConfig GpuMiner { get; set; } = new() { PauseWhile = new() { ProcessNames = ["cs2", "dota2", "deadlock", "r5apex", "javaw", "Minecraft"], QuietSeconds = 300 } };
+    public GpuMinerConfig GpuMiner { get; set; } = new() { PauseWhile = new() { ProcessNames = ["cs2", "dota2", "deadlock", "r5apex", "RustClient", "rust", "javaw", "Minecraft"], QuietSeconds = 300 } };
 
     /// <summary>
     /// Remembered pool and wallet per GPU algorithm (CR29, pearlhash, NEXA) so switching a node
