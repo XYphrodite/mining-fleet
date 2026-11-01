@@ -25,6 +25,7 @@ public sealed class Dashboard : IDisposable
     private DateTimeOffset _xtmFetchedAt = DateTimeOffset.MinValue;
     private readonly Dictionary<string, GpuPoolTarget> _gpuTargets = new();
     private IReadOnlyList<GpuIncomeRow> _gpuIncomeRows = [];
+    private readonly SparklineHistory _sparklines = new();
     private MoneyFormat? _money;
     private DateTimeOffset _marketFetchedAt = DateTimeOffset.MinValue;
 
@@ -58,6 +59,7 @@ public sealed class Dashboard : IDisposable
                 {
                     await RefreshMarketAsync(ct);
                     var states = await _fleet.PollAsync(ct);
+                    _sparklines.Record(states);
                     await RefreshXtmAsync(states, _xtm, ct);
                     var gpuQuotes = await _gpuIncome.ResolveQuotesAsync(states, _config, _fleet, ct, _gpuTargets);
                     var economics = Economics.Calculate(states, _config, _network, _price, gpuQuotes);
@@ -158,7 +160,8 @@ public sealed class Dashboard : IDisposable
             _price,
             _xtmIncome,
             _gpuIncomeRows,
-            DateTimeOffset.UtcNow);
+            DateTimeOffset.UtcNow,
+            _sparklines);
 
     public static IRenderable RenderView(
         IReadOnlyList<NodeState> states,
@@ -168,7 +171,8 @@ public sealed class Dashboard : IDisposable
         double? price,
         IReadOnlyList<XtmIncomeRow> xtmIncome,
         IReadOnlyList<GpuIncomeRow> gpuIncomeRows,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        SparklineHistory? sparklines = null)
     {
         // Twelve columns already wrap an 80-column terminal, so the GPU pair only appears when
         // some node in the fleet actually has a card mining. A fleet with none loses nothing.
@@ -207,11 +211,15 @@ public sealed class Dashboard : IDisposable
             var hardware = state.Snapshot?.Hardware;
             var nodeEconomics = economics.ForNode(state.Node.Name);
 
+            var cpuSpark = sparklines?.CpuMarkup(state.Node.Name) ?? "";
+            var cpuCell = (state.Hashrate > 0 ? $"[aqua]{Economics.FormatHashrate(state.Hashrate)}[/]" : "[grey]-[/]")
+                + (cpuSpark.Length > 0 ? $"\n{cpuSpark}" : "");
+
             var cells = new List<IRenderable>
             {
                 new Markup($"[bold]{UiHelpers.Escape(state.Node.Name)}[/]\n[grey]{UiHelpers.Escape(state.Node.Host)}[/]"),
                 new Markup(UiHelpers.StatusBadge(state)),
-                new Markup(state.Hashrate > 0 ? $"[aqua]{Economics.FormatHashrate(state.Hashrate)}[/]" : "[grey]-[/]"),
+                new Markup(cpuCell),
                 new Markup(miner?.MiningThreads is { } thr ? $"{thr}" : "[grey]-[/]"),
                 new Markup(UiHelpers.ThrottleBadge(state.Throttle)),
                 new Markup(UiHelpers.HugePages(miner)),
@@ -228,7 +236,9 @@ public sealed class Dashboard : IDisposable
 
             if (showGpu)
             {
-                cells.Add(new Markup(UiHelpers.GpuBadge(state.Gpu)));
+                var gpuSpark = sparklines?.GpuMarkup(state.Node.Name) ?? "";
+                var gpuCell = UiHelpers.GpuBadge(state.Gpu) + (gpuSpark.Length > 0 ? $"\n{gpuSpark}" : "");
+                cells.Add(new Markup(gpuCell));
                 cells.Add(new Markup(UiHelpers.GpuShares(state.Gpu)));
             }
 

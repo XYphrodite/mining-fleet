@@ -563,6 +563,11 @@ internal sealed class EconomicsScreenReport(FleetConfig config, FleetService fle
         {
             AnsiConsole.WriteLine();
             AnsiConsole.Write(EconomicsScreen.BuildNodeBreakdownTable(economics, config, money));
+            if (FleetCharts.BuildEconomicsCharts(economics) is { } charts)
+            {
+                AnsiConsole.WriteLine();
+                AnsiConsole.Write(charts);
+            }
         }
     }
 }

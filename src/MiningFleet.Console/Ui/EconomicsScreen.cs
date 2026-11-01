@@ -84,6 +84,12 @@ public sealed class EconomicsScreen
         AnsiConsole.WriteLine();
         AnsiConsole.Write(BuildNodeBreakdownTable(economics, _config, money));
 
+        if (FleetCharts.BuildEconomicsCharts(economics) is { } charts)
+        {
+            AnsiConsole.WriteLine();
+            AnsiConsole.Write(charts);
+        }
+
         RenderReconciliation(economics, wallet, price, currency, money);
 
         UiHelpers.Pause();
