@@ -47,5 +47,17 @@ public sealed record MoneyFormat(string Currency, string? SecondaryCurrency, dou
             : primary;
     }
 
+    /// <summary>Primary currency only, without the secondary echo, so dense per-node tables stay narrow.</summary>
+    public string CompactMarkup(double? amount) =>
+        amount is null ? "[grey]-[/]" : $"{amount.Value:N2} {Escape(Currency)}";
+
+    /// <summary>Coloured by sign in the primary currency only.</summary>
+    public string CompactSigned(double? amount)
+    {
+        if (amount is null) return "[grey]-[/]";
+        var colour = amount.Value >= 0 ? "green" : "red";
+        return $"[{colour}]{amount.Value:N2} {Escape(Currency)}[/]";
+    }
+
     private static string Escape(string value) => Spectre.Console.Markup.Escape(value);
 }

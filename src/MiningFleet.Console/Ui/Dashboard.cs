@@ -59,7 +59,8 @@ public sealed class Dashboard : IDisposable
                     await RefreshMarketAsync(ct);
                     var states = await _fleet.PollAsync(ct);
                     await RefreshXtmAsync(states, _xtm, ct);
-                    var economics = Economics.Calculate(states, _config, _network, _price);
+                    var gpuQuotes = await _gpuIncome.ResolveQuotesAsync(states, _config, _fleet, ct, _gpuTargets);
+                    var economics = Economics.Calculate(states, _config, _network, _price, gpuQuotes);
 
                     ctx.UpdateTarget(Compose(states, economics));
                     ctx.Refresh();
@@ -148,10 +149,27 @@ public sealed class Dashboard : IDisposable
         _gpuIncomeRows = gpuRows;
     }
 
-    private IRenderable Compose(IReadOnlyList<NodeState> states, FleetEconomics economics)
-    {
-        var money = _money ?? MoneyFormat.Single(economics.Currency);
+    private IRenderable Compose(IReadOnlyList<NodeState> states, FleetEconomics economics) =>
+        RenderView(
+            states,
+            economics,
+            _money ?? MoneyFormat.Single(economics.Currency),
+            _network,
+            _price,
+            _xtmIncome,
+            _gpuIncomeRows,
+            DateTimeOffset.UtcNow);
 
+    public static IRenderable RenderView(
+        IReadOnlyList<NodeState> states,
+        FleetEconomics economics,
+        MoneyFormat money,
+        PoolNetworkStats? network,
+        double? price,
+        IReadOnlyList<XtmIncomeRow> xtmIncome,
+        IReadOnlyList<GpuIncomeRow> gpuIncomeRows,
+        DateTimeOffset now)
+    {
         // Twelve columns already wrap an 80-column terminal, so the GPU pair only appears when
         // some node in the fleet actually has a card mining. A fleet with none loses nothing.
         var showGpu = states.Any(s => s.Gpu is not null);
@@ -159,7 +177,7 @@ public sealed class Dashboard : IDisposable
         var table = new Table()
             .Border(TableBorder.Rounded)
             .BorderColor(Color.Grey35)
-            .Title($"[bold]Nodes[/] [grey]{DateTime.Now:HH:mm:ss}[/]")
+            .Title($"[bold]Nodes[/] [grey]{now.ToLocalTime():HH:mm:ss}[/]")
             .AddColumn("Node")
             .AddColumn("State")
             .AddColumn(new TableColumn("Hashrate").RightAligned())
@@ -179,12 +197,15 @@ public sealed class Dashboard : IDisposable
                 .AddColumn(new TableColumn("GPU sh").RightAligned());
         }
 
-        table.AddColumn(new TableColumn("Uptime").RightAligned());
+        table
+            .AddColumn(new TableColumn("Income/d").RightAligned().NoWrap())
+            .AddColumn(new TableColumn("Uptime").RightAligned());
 
         foreach (var state in states.OrderBy(s => s.Node.Name, StringComparer.OrdinalIgnoreCase))
         {
             var miner = state.Snapshot?.Miner;
             var hardware = state.Snapshot?.Hardware;
+            var nodeEconomics = economics.ForNode(state.Node.Name);
 
             var cells = new List<IRenderable>
             {
@@ -211,7 +232,10 @@ public sealed class Dashboard : IDisposable
                 cells.Add(new Markup(UiHelpers.GpuShares(state.Gpu)));
             }
 
-            cells.Add(new Markup(miner is { Running: true } ? Economics.FormatDuration(miner.UptimeSeconds) : "[grey]-[/]"));
+            cells.Add(new Markup(FormatNodeIncomeMarkup(nodeEconomics, money)));
+            cells.Add(new Markup(miner is { Running: true }
+                ? Economics.FormatDuration(miner.UptimeSeconds)
+                : "[grey]-[/]"));
             table.AddRow(cells);
         }
 
@@ -223,34 +247,99 @@ public sealed class Dashboard : IDisposable
             Cell("Fleet", $"[green]{mining}[/] mining / {online} online / {states.Count} total"),
             Cell("Hashrate", $"[aqua]{Economics.FormatHashrate(economics.TotalHashrate)}[/]"),
             Cell("Draw", $"{economics.TotalWatts:0} W"));
-        summary.AddRow(
-            Cell("Power cost/day", money.Markup(economics.CostPerDay)),
-            Cell("XMR income/day", economics.XmrPerDay is { } xmr
-                ? $"{xmr:0.00000} XMR  {money.Markup(economics.RevenuePerDay)}"
-                : "[grey]needs pool data[/]"),
-            Cell("XMR - power/day", money.Signed(economics.ProfitPerDay)));
+
+        string totalsNote;
         if (economics.TotalGpuHashrate > 0)
         {
+            var accepted = states.Where(x => x.GpuMining).Sum(x => x.Gpu?.AcceptedShares ?? 0);
+            var totalShares = states.Where(x => x.GpuMining)
+                .Sum(x => (x.Gpu?.AcceptedShares ?? 0) + (x.Gpu?.RejectedShares ?? 0) + (x.Gpu?.StaleShares ?? 0));
+
             summary.AddRow(
-                Cell("GPU", $"[aqua]{UiHelpers.Escape(Economics.FormatGpuFleetRate(states))}[/]"),
-                Cell("Pool income", _xtmIncome.Any(row => row.Account is not null) || _gpuIncomeRows.Count > 0
-                    ? "see pool wallet income below" : "no supported wallet data"),
-                Cell("GPU shares", states.Where(x=>x.GpuMining).Sum(x=>x.Gpu?.AcceptedShares??0) + "/" + states.Where(x=>x.GpuMining).Sum(x=> (x.Gpu?.AcceptedShares??0)+(x.Gpu?.RejectedShares??0)+(x.Gpu?.StaleShares??0))));
+                Cell("CPU income/day", economics.XmrPerDay is { } xmr
+                    ? $"{xmr:0.00000} XMR  {money.Markup(economics.RevenuePerDay)}"
+                    : economics.TotalHashrate <= 0
+                        ? money.Markup(0)
+                        : "[grey]needs pool data[/]"),
+                Cell("GPU income/day", economics.GpuRevenuePerDay is { } gpuRev
+                    ? money.Markup(gpuRev)
+                    : "[yellow]needs GPU pool/price[/]"),
+                Cell("Power cost/day", money.Markup(economics.CostPerDay)));
+
+            summary.AddRow(
+                Cell("GPU", $"[aqua]{UiHelpers.Escape(Economics.FormatGpuFleetRate(states))}[/]  [grey]({accepted}/{totalShares} sh)[/]"),
+                Cell("Total income/day", FormatFleetTotalIncomeMarkup(economics, money)),
+                Cell("Net profit/day", economics.TotalProfitPerDay is { } netProfit
+                    ? money.Signed(netProfit)
+                    : "[grey]needs all pool prices[/]"));
+
+            totalsNote = "[grey]Totals combine live CPU + GPU speed at current pool yield minus total power draw. Rolling wallet accruals are shown below.[/]";
+        }
+        else
+        {
+            summary.AddRow(
+                Cell("Power cost/day", money.Markup(economics.CostPerDay)),
+                Cell("XMR income/day", economics.XmrPerDay is { } xmr
+                    ? $"{xmr:0.00000} XMR  {money.Markup(economics.RevenuePerDay)}"
+                    : "[grey]needs pool data[/]"),
+                Cell("Net profit/day", money.Signed(economics.TotalProfitPerDay ?? economics.ProfitPerDay)));
+
+            totalsNote = "[grey]Net profit = live XMR income minus the displayed power cost.[/]";
         }
 
         var footer = new Markup(
-            $"[grey]price[/] {money.Markup(_price)}   " +
-            $"[grey]net[/] {(_network?.NetworkHashrate is { } nh ? Economics.FormatHashrate(nh) : "-")}   " +
+            $"[grey]price[/] {money.Markup(price)}   " +
+            $"[grey]net[/] {(network?.NetworkHashrate is { } nh ? Economics.FormatHashrate(nh) : "-")}   " +
             "[grey]press any key to return[/]");
 
         return new Rows(
             table,
-            new Panel(new Rows(summary, new Markup(
-                "[grey]XMR - power = XMR income minus the displayed power cost. XTM and PRL income are accounted for separately.[/]")))
+            new Panel(new Rows(summary, new Markup(totalsNote)))
                 .Header("[bold]Totals[/]").Border(BoxBorder.Rounded).BorderColor(Color.Grey35).Expand(),
-            XtmIncomePanel.Render(_xtmIncome, DateTimeOffset.UtcNow, money),
-            GpuIncomePanel.Render(_gpuIncomeRows, money, DateTimeOffset.UtcNow),
+            XtmIncomePanel.Render(xtmIncome, now, money),
+            GpuIncomePanel.Render(gpuIncomeRows, money, now),
             footer);
+    }
+
+    /// <summary>
+    /// Formats one machine's combined daily income cell. Dual-mining machines show their total on
+    /// the first line and the CPU + GPU split right below in the second line that the row already occupies.
+    /// </summary>
+    public static string FormatNodeIncomeMarkup(NodeEconomics? node, MoneyFormat money)
+    {
+        if (node is null || !node.State.AnyMining) return "[grey]-[/]";
+
+        if (node.TotalRevenuePerDay is { } total)
+        {
+            if (node.State.Mining && node.State.GpuMining
+                && node.CpuRevenuePerDay is { } cpu && node.GpuRevenuePerDay is { } gpu)
+            {
+                return $"{money.CompactMarkup(total)}\n[grey]{cpu:N2} + {gpu:N2}[/]";
+            }
+
+            if (!node.State.Mining && node.State.GpuMining)
+            {
+                return $"{money.CompactMarkup(total)}\n[grey]GPU[/]";
+            }
+
+            return money.CompactMarkup(total);
+        }
+
+        if (node.KnownRevenuePerDay is { } known)
+        {
+            var missing = node.GpuRevenueMissing ? "+ GPU ?" : "+ CPU ?";
+            return $"{money.CompactMarkup(known)}\n[yellow]{missing}[/]";
+        }
+
+        return "[grey]?[/]";
+    }
+
+    public static string FormatFleetTotalIncomeMarkup(FleetEconomics economics, MoneyFormat money)
+    {
+        if (economics.TotalRevenuePerDay is { } total) return money.Markup(total);
+        if (economics.KnownRevenuePerDay is { } known && economics.HasMissingRevenue)
+            return $"{money.Markup(known)} [yellow](partial)[/]";
+        return "[grey]needs pool data[/]";
     }
 
     private static IRenderable Cell(string label, string value) => new Markup($"[grey]{UiHelpers.Escape(label)}[/]  {value}");

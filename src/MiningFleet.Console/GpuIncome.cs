@@ -229,5 +229,13 @@ public sealed class GpuIncomeService : IDisposable
     public Task<double?> GetPriceAsync(GpuPoolTarget target, string currency, CancellationToken ct) =>
         _pool.GetPriceAsync(target, currency, ct);
 
+    public Task<IReadOnlyDictionary<string, NodeGpuQuote>> ResolveQuotesAsync(
+        IReadOnlyList<NodeState> states,
+        FleetConfig config,
+        FleetService? fleet,
+        CancellationToken ct,
+        IReadOnlyDictionary<string, GpuPoolTarget>? knownTargets = null) =>
+        _pool.ResolveQuotesAsync(states, config, fleet, ct, knownTargets);
+
     public void Dispose() => _pool.Dispose();
 }

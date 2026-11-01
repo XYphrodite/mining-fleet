@@ -516,31 +516,54 @@ internal sealed class EconomicsScreenReport(FleetConfig config, FleetService fle
 {
     public async Task WriteAsync(CancellationToken ct)
     {
+        using var gpuPool = new GpuPoolService();
         var pollTask = fleet.PollAsync(ct);
         var networkTask = market.GetNetworkStatsAsync(ct);
         var walletTask = market.GetWalletStatsAsync(ct);
         var priceTask = market.GetPriceAsync(ct);
         await Task.WhenAll(pollTask, networkTask, walletTask, priceTask);
 
-        var economics = Economics.Calculate(pollTask.Result, config, networkTask.Result, priceTask.Result);
+        var states = pollTask.Result;
+        var gpuQuotesTask = gpuPool.ResolveQuotesAsync(states, config, fleet, ct);
+        var moneyTask = market.GetMoneyFormatAsync(ct);
+        await Task.WhenAll(gpuQuotesTask, moneyTask);
+
+        var economics = Economics.Calculate(states, config, networkTask.Result, priceTask.Result, gpuQuotesTask.Result);
         var currency = economics.Currency;
         var credited = walletTask.Result?.CreditedTodayXmr;
-        var money = await market.GetMoneyFormatAsync(ct);
+        var money = moneyTask.Result;
 
         var table = new Table().Border(TableBorder.Rounded)
             .AddColumn("Metric").AddColumn(new TableColumn("Value").RightAligned());
-        table.AddRow("Hashrate", Economics.FormatHashrate(economics.TotalHashrate));
+        table.AddRow("CPU hashrate", Economics.FormatHashrate(economics.TotalHashrate));
+        if (economics.TotalGpuHashrate > 0)
+        {
+            table.AddRow("GPU rate", UiHelpers.Escape(Economics.FormatGpuFleetRate(states)));
+        }
         table.AddRow("Power draw", $"{economics.TotalWatts:0} W");
         table.AddRow("Electricity per day", money.Markup(economics.CostPerDay));
-        table.AddRow("Income per day (estimate)", economics.XmrPerDay is { } x ? $"{x:0.000000} XMR" : "-");
-        table.AddRow($"Income per day, {currency}", money.Markup(economics.RevenuePerDay));
-        table.AddRow("Credited by the pool, 24h", credited is { } c ? $"{c:0.000000} XMR" : "-");
-        table.AddRow("Actual vs estimate", economics.XmrPerDay is > 0 && credited is { } c2
+        table.AddRow("CPU income per day (XMR)", economics.XmrPerDay is { } x ? $"{x:0.000000} XMR" : "-");
+        table.AddRow($"CPU income per day, {UiHelpers.Escape(currency)}", money.Markup(economics.RevenuePerDay));
+        if (economics.TotalGpuHashrate > 0)
+        {
+            table.AddRow($"GPU income per day, {UiHelpers.Escape(currency)}", economics.GpuRevenuePerDay is { } g
+                ? money.Markup(g)
+                : "[yellow]needs GPU pool/price[/]");
+        }
+        table.AddRow($"Total income per day, {UiHelpers.Escape(currency)}", Dashboard.FormatFleetTotalIncomeMarkup(economics, money));
+        table.AddRow("Credited by XMR pool, 24h", credited is { } c ? $"{c:0.000000} XMR" : "-");
+        table.AddRow("Actual vs XMR estimate", economics.XmrPerDay is > 0 && credited is { } c2
             ? $"{c2 / economics.XmrPerDay.Value:P0}"
             : "-");
-        table.AddRow("Profit per day", money.Signed(economics.ProfitPerDay));
+        table.AddRow("Net profit per day", money.Signed(economics.TotalProfitPerDay));
         table.AddRow("Cost per XMR", money.Markup(economics.CostPerXmr));
         AnsiConsole.Write(table);
+
+        if (states.Any(s => s.AnyMining))
+        {
+            AnsiConsole.WriteLine();
+            AnsiConsole.Write(EconomicsScreen.BuildNodeBreakdownTable(economics, config, money));
+        }
     }
 }
 

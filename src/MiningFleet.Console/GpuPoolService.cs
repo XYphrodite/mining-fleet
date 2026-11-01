@@ -9,6 +9,12 @@ namespace MiningFleet.Console;
 /// <param name="Address">The wallet, without the worker name the miner appends to it.</param>
 public sealed record GpuPoolTarget(string Provider, string Coin, string Address);
 
+/// <summary>
+/// What one unit of miner hashrate earns per day on a Kryptex pool right now, after the pool's
+/// fee, in the coin's own units (e.g. PRL per H/s/day, or XTM per g/s/day).
+/// </summary>
+public sealed record GpuPoolRate(string Coin, string Ticker, double CoinsPerHashrateDay, double Fee);
+
 /// <summary>One payout the pool says it has sent.</summary>
 public sealed record GpuPayout(DateTimeOffset At, double Amount);
 
@@ -90,6 +96,7 @@ public sealed record GpuPoolStats(
 public sealed class GpuPoolService : IDisposable
 {
     private const string Kryptex = "kryptex";
+    private static readonly string[] KryptexRegionSuffixes = ["-eu", "-us", "-br", "-sg", "-hk", "-ru", "-ae"];
     private static readonly TimeSpan Ttl = TimeSpan.FromMinutes(2);
 
     private static readonly TimeSpan PriceTtl = TimeSpan.FromMinutes(10);
@@ -97,6 +104,7 @@ public sealed class GpuPoolService : IDisposable
     private readonly HttpClient _http;
     private readonly TimeProvider _clock;
     private readonly Dictionary<string, (DateTimeOffset At, GpuPoolStats? Stats)> _cache = new();
+    private readonly Dictionary<string, (DateTimeOffset At, GpuPoolRate? Rate)> _rates = new();
     private readonly Dictionary<string, (DateTimeOffset At, double? Price)> _prices = new();
 
     public GpuPoolService(HttpMessageHandler? handler = null, TimeProvider? clock = null)
@@ -109,6 +117,37 @@ public sealed class GpuPoolService : IDisposable
     }
 
     /// <summary>
+    /// Extracts Kryptex's canonical coin slug from a stratum endpoint (e.g. <c>prl.kryptex.network:7048</c>
+    /// or regional <c>xtm-c29-eu.kryptex.network:7040</c>), without needing a wallet address.
+    /// </summary>
+    public static string? CoinForPool(string? poolUrl)
+    {
+        if (string.IsNullOrWhiteSpace(poolUrl)) return null;
+
+        var trimmed = poolUrl.Trim();
+        var schemeEnd = trimmed.IndexOf("://", StringComparison.Ordinal);
+        if (schemeEnd >= 0) trimmed = trimmed[(schemeEnd + 3)..];
+
+        var host = trimmed.Split(':', '/')[0].Trim().ToLowerInvariant();
+        var labels = host.Split('.');
+        if (labels.Length is < 2 or > 3) return null;
+        if (labels[1] != Kryptex) return null;
+        if (labels.Length == 3 && labels[2] != "network") return null;
+
+        var coin = labels[0];
+        foreach (var suffix in KryptexRegionSuffixes)
+        {
+            if (coin.Length > suffix.Length && coin.EndsWith(suffix, StringComparison.Ordinal))
+            {
+                coin = coin[..^suffix.Length];
+                break;
+            }
+        }
+
+        return coin.Length == 0 ? null : coin;
+    }
+
+    /// <summary>
     /// Reads the pool and the coin out of settings the operator has already given the card.
     /// Returns null when this pool is not one we can read, which is not an error.
     /// </summary>
@@ -116,20 +155,11 @@ public sealed class GpuPoolService : IDisposable
     {
         if (gpu?.Enabled != true) return null;
         if (string.IsNullOrWhiteSpace(gpu.PoolUrl) || string.IsNullOrWhiteSpace(gpu.User)) return null;
-
-        var host = gpu.PoolUrl.Split(':')[0].Trim().ToLowerInvariant();
-        var labels = host.Split('.');
-        if (labels.Length < 2) return null;
-
-        var provider = labels[1];
-        if (provider != Kryptex) return null;
-
-        var coin = labels[0];
-        if (coin.Length == 0) return null;
+        if (CoinForPool(gpu.PoolUrl) is not { } coin) return null;
 
         // Kryptex takes address/worker. A login with no slash is the whole address.
         var address = gpu.User.Split('/')[0].Trim();
-        return address.Length == 0 ? null : new GpuPoolTarget(provider, coin, address);
+        return address.Length == 0 ? null : new GpuPoolTarget(Kryptex, coin, address);
     }
 
     public async Task<GpuPoolStats?> GetAsync(GpuPoolTarget target, CancellationToken ct)
@@ -227,14 +257,135 @@ public sealed class GpuPoolService : IDisposable
     };
 
     /// <summary>
+    /// Parses Kryptex's <c>/{coin}/api/v1/pool/stats</c> into net daily coins per unit of miner
+    /// hashrate. PPS+ pools publish <c>estimated_profit_day</c> directly; PROP pools (<c>xtm-c29</c>)
+    /// send <c>null</c> there and answer through <c>net_hashrate</c>, <c>block_time</c> and
+    /// <c>block_reward</c> instead.
+    /// </summary>
+    public static GpuPoolRate? ParsePoolRate(string coin, JsonElement stats)
+    {
+        if (stats.ValueKind != JsonValueKind.Object) return null;
+
+        var fee = Number(stats, "fee") ?? 0.0;
+        if (!double.IsFinite(fee) || fee is < 0 or >= 1) return null;
+
+        double? gross = null;
+        if (Number(stats, "estimated_profit_day") is { } est && est > 0 && double.IsFinite(est))
+        {
+            gross = est;
+        }
+        else if (Number(stats, "net_hashrate") is { } netHr && netHr > 0 && double.IsFinite(netHr)
+                 && Number(stats, "block_time") is { } blockTime && blockTime > 0 && double.IsFinite(blockTime)
+                 && Number(stats, "block_reward") is { } reward && reward > 0 && double.IsFinite(reward))
+        {
+            gross = 86400.0 / blockTime * reward / netHr;
+        }
+
+        if (gross is null) return null;
+
+        var net = gross.Value * (1.0 - fee);
+        if (net <= 0 || !double.IsFinite(net)) return null;
+
+        var ticker = stats.TryGetProperty("ticker", out var t)
+                     && t.ValueKind == JsonValueKind.String
+                     && !string.IsNullOrWhiteSpace(t.GetString())
+            ? t.GetString()!.Trim().ToUpperInvariant()
+            : coin.Split('-')[0].ToUpperInvariant();
+
+        return new GpuPoolRate(coin, ticker, net, fee);
+    }
+
+    public async Task<GpuPoolRate?> GetPoolRateAsync(string coin, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(coin)) return null;
+
+        var slug = coin.Trim().ToLowerInvariant();
+        var now = _clock.GetUtcNow();
+        if (_rates.TryGetValue(slug, out var cached) && now - cached.At < Ttl)
+            return cached.Rate;
+
+        var json = await ReadJsonAsync($"https://pool.kryptex.com/{slug}/api/v1/pool/stats", ct);
+        var rate = json is { } root ? ParsePoolRate(slug, root) : null;
+
+        if (rate is null && cached.Rate is not null) return cached.Rate;
+
+        _rates[slug] = (now, rate);
+        return rate;
+    }
+
+    /// <summary>
+    /// Resolves live GPU yield and coin price for every node currently GPU-mining, querying each
+    /// distinct Kryptex coin slug at most once per refresh.
+    /// </summary>
+    public async Task<IReadOnlyDictionary<string, NodeGpuQuote>> ResolveQuotesAsync(
+        IReadOnlyList<NodeState> states,
+        FleetConfig config,
+        FleetService? fleet,
+        CancellationToken ct,
+        IReadOnlyDictionary<string, GpuPoolTarget>? knownTargets = null)
+    {
+        var active = states.Where(s => s.GpuMining).ToList();
+        if (active.Count == 0) return new Dictionary<string, NodeGpuQuote>();
+
+        var nodeCoins = new List<(NodeState State, string Coin)>();
+        foreach (var state in active)
+        {
+            var coin = CoinForPool(state.Gpu?.Pool);
+            if (coin is null && knownTargets is not null && knownTargets.TryGetValue(state.Node.Endpoint, out var known))
+                coin = known.Coin;
+            coin ??= CoinForPool(config.GpuMinerFor(state.Node).PoolUrl);
+
+            if (coin is null && fleet is not null && state.Online)
+            {
+                using var client = fleet.CreateClient(state.Node);
+                try
+                {
+                    var remote = await client.GetConfigAsync(ct);
+                    coin = CoinForPool(remote?.GpuMiner?.PoolUrl);
+                }
+                catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+                {
+                    // Unreadable node config leaves the quote absent so the UI marks it as unknown.
+                }
+            }
+
+            if (coin is not null) nodeCoins.Add((state, coin));
+        }
+
+        var currency = config.Electricity.Currency;
+        var byCoin = new Dictionary<string, NodeGpuQuote>(StringComparer.OrdinalIgnoreCase);
+        foreach (var coin in nodeCoins.Select(n => n.Coin).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var rateTask = GetPoolRateAsync(coin, ct);
+            var priceTask = GetCoinPriceAsync(coin, currency, ct);
+            await Task.WhenAll(rateTask, priceTask);
+            var rate = rateTask.Result;
+            var ticker = rate?.Ticker ?? coin.Split('-')[0].ToUpperInvariant();
+            byCoin[coin] = new NodeGpuQuote(ticker, rate?.CoinsPerHashrateDay, priceTask.Result);
+        }
+
+        var quotes = new Dictionary<string, NodeGpuQuote>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (state, coin) in nodeCoins)
+        {
+            if (byCoin.TryGetValue(coin, out var quote))
+                quotes[state.Node.Name] = quote;
+        }
+
+        return quotes;
+    }
+
+    /// <summary>
     /// What one coin is worth in the fleet's currency, or null when no source carries it.
     ///
     /// Left blank rather than fetched in some other currency, for the reason the Monero side is:
     /// a number in the wrong units beside numbers in the right ones is worse than a gap.
     /// </summary>
-    public async Task<double?> GetPriceAsync(GpuPoolTarget target, string currency, CancellationToken ct)
+    public Task<double?> GetPriceAsync(GpuPoolTarget target, string currency, CancellationToken ct) =>
+        GetCoinPriceAsync(target.Coin, currency, ct);
+
+    public async Task<double?> GetCoinPriceAsync(string coinSlug, string currency, CancellationToken ct)
     {
-        if (PriceId(target.Coin) is not { } id) return null;
+        if (PriceId(coinSlug) is not { } id) return null;
 
         var now = _clock.GetUtcNow();
         var vs = currency.ToLowerInvariant();
