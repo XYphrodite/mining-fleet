@@ -10,6 +10,7 @@ public sealed class EconomicsScreen
     private readonly MarketService _market;
     private readonly GpuPoolService _gpuPool = new();
     private readonly GpuIncomeService _gpuIncome;
+    private readonly LifetimeIncomeLedger _lifetime;
     private readonly XtmIncomeService _xtm = new();
 
     public EconomicsScreen(FleetConfig config, FleetService fleet, MarketService market)
@@ -18,6 +19,7 @@ public sealed class EconomicsScreen
         _fleet = fleet;
         _market = market;
         _gpuIncome = new GpuIncomeService(_gpuPool, GpuIncomeLedger.For(config));
+        _lifetime = LifetimeIncomeLedger.For(config);
     }
 
     public async Task ShowAsync(CancellationToken ct)
@@ -29,6 +31,7 @@ public sealed class EconomicsScreen
         PoolWalletStats? wallet = null;
         double? price = null;
         IReadOnlyDictionary<string, NodeGpuQuote> gpuQuotes = new Dictionary<string, NodeGpuQuote>();
+        IReadOnlyDictionary<string, NodeGpuQuote> coinQuotes = new Dictionary<string, NodeGpuQuote>();
         MoneyFormat money = MoneyFormat.Single(_config.Electricity.Currency);
 
         await AnsiConsole.Status().StartAsync("Collecting fleet and market data...", async _ =>
@@ -43,14 +46,18 @@ public sealed class EconomicsScreen
             wallet = walletTask.Result;
             price = priceTask.Result;
             var quotesTask = _gpuPool.ResolveQuotesAsync(states, _config, _fleet, ct);
+            var coinSlugs = _lifetime.KnownGpuCoinSlugs(states, _config);
+            var coinQuotesTask = _gpuPool.ResolveCoinQuotesAsync(coinSlugs, _config.Electricity.Currency, ct);
             var moneyTask = _market.GetMoneyFormatAsync(ct);
-            await Task.WhenAll(quotesTask, moneyTask);
+            await Task.WhenAll(quotesTask, coinQuotesTask, moneyTask);
             gpuQuotes = quotesTask.Result;
+            coinQuotes = coinQuotesTask.Result;
             money = moneyTask.Result;
         });
 
         var currency = _config.Electricity.Currency;
         var economics = Economics.Calculate(states, _config, network, price, gpuQuotes);
+        var lifetime = _lifetime.UpdateAndCalculate(states, _config, network, price, coinQuotes, gpuQuotes);
 
         var summary = new Grid().AddColumn().AddColumn();
         summary.AddRow("[grey]Mining nodes[/]", $"{states.Count(s => s.AnyMining)} of {states.Count}");
@@ -88,6 +95,17 @@ public sealed class EconomicsScreen
         {
             AnsiConsole.WriteLine();
             AnsiConsole.Write(charts);
+        }
+
+        if (lifetime.Nodes.Count > 0)
+        {
+            AnsiConsole.WriteLine();
+            AnsiConsole.Write(BuildLifetimeTable(lifetime, money));
+            if (lifetime.UpgradeNeededCount > 0)
+            {
+                AnsiConsole.MarkupLine(
+                    $"[grey]{lifetime.UpgradeNeededCount} online node(s) still need 'mining-fleet upgrade-agents' to record 24/7 all-time income.[/]");
+            }
         }
 
         RenderReconciliation(economics, wallet, price, currency, money);
@@ -282,6 +300,198 @@ public sealed class EconomicsScreen
         }
 
         return breakdown;
+    }
+
+    /// <summary>
+    /// All-time cumulative earnings, energy and net profit per machine since 24/7 agent tracking
+    /// began, keeping offline machines with banked history visible alongside online ones.
+    /// </summary>
+    public static Table BuildLifetimeTable(FleetLifetimeSummary lifetime, MoneyFormat money)
+    {
+        var ordered = lifetime.Nodes
+            .OrderByDescending(n => n.HasData)
+            .ThenByDescending(n => n.TotalRevenue ?? n.KnownRevenue ?? 0)
+            .ThenBy(n => n.NodeName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var showGpu = lifetime.TotalGpuCoins.Count > 0
+                      || ordered.Any(n => n.GpuCoins.Count > 0 || n.GpuMiningSeconds > 0);
+
+        var table = new Table().Border(TableBorder.Rounded).BorderColor(Color.Grey35)
+            .Title("[bold]All-time per node[/]")
+            .AddColumn("Node")
+            .AddColumn("Tracked / Active")
+            .AddColumn(new TableColumn("Coins mined").RightAligned());
+
+        if (showGpu)
+        {
+            table.AddColumn(new TableColumn("CPU").RightAligned());
+            table.AddColumn(new TableColumn("GPU").RightAligned());
+        }
+
+        table
+            .AddColumn(new TableColumn("Total income").RightAligned())
+            .AddColumn(new TableColumn("Energy").RightAligned())
+            .AddColumn(new TableColumn("Power cost").RightAligned())
+            .AddColumn(new TableColumn("Net profit").RightAligned());
+
+        foreach (var node in ordered)
+        {
+            var nameTag = !node.Online && node.HasData
+                ? " [grey](offline)[/]"
+                : node.NeedsAgentUpgrade && node.HasData
+                    ? " [yellow](upgrade agent)[/]"
+                    : "";
+            var nameCell = UiHelpers.Escape(node.NodeName) + nameTag;
+
+            if (!node.HasData)
+            {
+                var statusText = node.NeedsAgentUpgrade ? "[yellow]upgrade agent[/]" : "[grey]offline[/]";
+                if (showGpu)
+                {
+                    table.AddRow(
+                        new Markup(nameCell),
+                        new Markup(statusText),
+                        new Markup("[grey]-[/]"),
+                        new Markup("[grey]-[/]"),
+                        new Markup("[grey]-[/]"),
+                        new Markup("[grey]-[/]"),
+                        new Markup("[grey]-[/]"),
+                        new Markup("[grey]-[/]"),
+                        new Markup("[grey]-[/]"));
+                }
+                else
+                {
+                    table.AddRow(
+                        new Markup(nameCell),
+                        new Markup(statusText),
+                        new Markup("[grey]-[/]"),
+                        new Markup("[grey]-[/]"),
+                        new Markup("[grey]-[/]"),
+                        new Markup("[grey]-[/]"),
+                        new Markup("[grey]-[/]"));
+                }
+                continue;
+            }
+
+            var sincePart = node.TrackedSince is { } ts ? ts.ToLocalTime().ToString("yyyy-MM-dd") : "-";
+            var activePart = node.ActiveMiningSeconds > 0 ? Economics.FormatDuration(node.ActiveMiningSeconds) : "0m";
+            var trackedCell = $"{sincePart} [grey]({activePart})[/]";
+            var coinsCell = FormatLifetimeCoinsMarkup(node.CpuXmr, node.GpuCoins);
+
+            var totalCell = node.TotalRevenue is { } total
+                ? $"[bold]{money.Markup(total)}[/]"
+                : node.KnownRevenue is { } known && node.HasMissingRevenue
+                    ? $"{money.Markup(known)} [yellow]+ {(node.GpuRevenueMissing ? "GPU?" : "CPU?")}[/]"
+                    : "[yellow]?[/]";
+
+            var energyCell = $"{node.EnergyKwh:N2} kWh";
+            var costCell = money.CompactMarkup(node.ElectricityCost);
+            var profitCell = node.NetProfit is { } np ? money.Signed(np) : "[grey]-[/]";
+
+            if (showGpu)
+            {
+                var cpuCell = node.CpuXmr <= 0 && !node.CpuRevenueMissing
+                    ? "[grey]-[/]"
+                    : node.CpuRevenue is { } cr
+                        ? money.CompactMarkup(cr)
+                        : "[yellow]?[/]";
+                var gpuCell = node.GpuCoins.Count == 0 && !node.GpuRevenueMissing
+                    ? "[grey]-[/]"
+                    : node.GpuRevenue is { } gr
+                        ? money.CompactMarkup(gr)
+                        : "[yellow]?[/]";
+
+                table.AddRow(
+                    new Markup(nameCell),
+                    new Markup(trackedCell),
+                    new Markup(coinsCell),
+                    new Markup(cpuCell),
+                    new Markup(gpuCell),
+                    new Markup(totalCell),
+                    new Markup(energyCell),
+                    new Markup(costCell),
+                    new Markup(profitCell));
+            }
+            else
+            {
+                table.AddRow(
+                    new Markup(nameCell),
+                    new Markup(trackedCell),
+                    new Markup(coinsCell),
+                    new Markup(totalCell),
+                    new Markup(energyCell),
+                    new Markup(costCell),
+                    new Markup(profitCell));
+            }
+        }
+
+        if (lifetime.AnyTracked)
+        {
+            var sinceText = lifetime.EarliestTrackedSince is { } ets
+                ? $"[grey]since {ets.ToLocalTime():yyyy-MM-dd}[/]"
+                : "";
+            var totalCoins = FormatLifetimeCoinsMarkup(lifetime.TotalCpuXmr, lifetime.TotalGpuCoins);
+            var fleetIncome = FormatLifetimeIncomeMarkup(lifetime, money, bold: true);
+            var fleetEnergy = $"[bold]{lifetime.TotalEnergyKwh:N2} kWh[/]";
+            var fleetCost = $"[bold]{money.CompactMarkup(lifetime.TotalElectricityCost)}[/]";
+            var fleetProfit = lifetime.TotalNetProfit is { } fnp ? money.Signed(fnp) : "[grey]-[/]";
+
+            table.AddEmptyRow();
+            if (showGpu)
+            {
+                table.AddRow(
+                    new Markup("[bold]Fleet all-time[/]"),
+                    new Markup(sinceText),
+                    new Markup(totalCoins),
+                    new Markup(lifetime.CpuRevenue is { } fcr ? $"[bold]{money.CompactMarkup(fcr)}[/]" : "[yellow]?[/]"),
+                    new Markup(lifetime.GpuRevenue is { } fgr ? $"[bold]{money.CompactMarkup(fgr)}[/]" : "[yellow]?[/]"),
+                    new Markup(fleetIncome),
+                    new Markup(fleetEnergy),
+                    new Markup(fleetCost),
+                    new Markup(fleetProfit));
+            }
+            else
+            {
+                table.AddRow(
+                    new Markup("[bold]Fleet all-time[/]"),
+                    new Markup(sinceText),
+                    new Markup(totalCoins),
+                    new Markup(fleetIncome),
+                    new Markup(fleetEnergy),
+                    new Markup(fleetCost),
+                    new Markup(fleetProfit));
+            }
+        }
+
+        return table;
+    }
+
+    public static string FormatLifetimeIncomeMarkup(FleetLifetimeSummary lifetime, MoneyFormat money, bool bold = false)
+    {
+        if (lifetime.TotalRevenue is { } total)
+            return bold ? $"[bold]{money.Markup(total)}[/]" : money.Markup(total);
+        if (lifetime.KnownRevenue is { } known && lifetime.HasMissingRevenue)
+        {
+            var formatted = bold ? $"[bold]{money.Markup(known)}[/]" : money.Markup(known);
+            return $"{formatted} [yellow](partial)[/]";
+        }
+        return "[grey]needs pool prices[/]";
+    }
+
+    private static string FormatLifetimeCoinsMarkup(double cpuXmr, IReadOnlyList<NodeLifetimeCoin> gpuCoins)
+    {
+        var parts = new List<string>();
+        if (cpuXmr > 0) parts.Add($"{cpuXmr:0.00000} XMR");
+        foreach (var coin in gpuCoins)
+        {
+            if (coin.Amount > 0)
+            {
+                var fmt = coin.Amount >= 100 ? $"{coin.Amount:N1}" : $"{coin.Amount:0.0000}";
+                parts.Add($"{fmt} {UiHelpers.Escape(coin.Ticker)}");
+            }
+        }
+        return parts.Count == 0 ? "[grey]0[/]" : string.Join(" + ", parts);
     }
 
     /// <summary>

@@ -39,6 +39,7 @@ public sealed class AgentUpdateService
         "appsettings.Production.json",
         "xmrig-api.token",
         "miner.json",
+        LifetimeTracker.FileName,
     ];
 
     /// <summary>Exposed so a test can assert the list still covers everything that identifies a node.</summary>
@@ -46,11 +47,13 @@ public sealed class AgentUpdateService
 
     private readonly IHttpClientFactory _httpFactory;
     private readonly ILogger<AgentUpdateService> _log;
+    private readonly LifetimeTracker? _lifetime;
 
-    public AgentUpdateService(IHttpClientFactory httpFactory, ILogger<AgentUpdateService> log)
+    public AgentUpdateService(IHttpClientFactory httpFactory, ILogger<AgentUpdateService> log, LifetimeTracker? lifetime = null)
     {
         _httpFactory = httpFactory;
         _log = log;
+        _lifetime = lifetime;
     }
 
     public static string CurrentVersion =>
@@ -159,7 +162,10 @@ public sealed class AgentUpdateService
     }
 
     /// <summary>Leaves long enough for the HTTP response to reach the console, then hands over.</summary>
-    private void ScheduleRestart() => _ = Task.Run(async () =>
+    private void ScheduleRestart()
+    {
+        _lifetime?.Flush();
+        _ = Task.Run(async () =>
     {
         await Task.Delay(TimeSpan.FromSeconds(2));
 
@@ -198,6 +204,7 @@ public sealed class AgentUpdateService
         _log.LogWarning("Agent update: replaced, leaving so the new binary can take over");
         Environment.Exit(0);
     });
+    }
 
     /// <summary>
     /// Hands the node from the old service name to the new one after this process is gone.

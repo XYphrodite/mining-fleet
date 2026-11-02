@@ -109,6 +109,41 @@ public sealed record NodeSnapshotDto(AgentInfoDto Agent, MinerStatusDto Miner, H
 
     /// <summary>Fresh observations from the optional game governor; null on older agents.</summary>
     public GameMiningStatusDto? GameMining { get; init; }
+
+    /// <summary>Cumulative work and energy recorded on disk by this agent; null on older agents.</summary>
+    public NodeLifetimeDto? Lifetime { get; init; }
+}
+
+/// <summary>
+/// Cumulative GPU work for one pool/algorithm/unit combination, integrated as hashrate-days
+/// (<c>Hashrate * dtSeconds / 86400</c>) so multiplying by <c>CoinsPerHashrateDay</c> yields coins
+/// directly regardless of whether the miner reports <c>H/s</c> or <c>g/s</c>.
+/// </summary>
+public sealed record GpuLifetimeBucketDto(
+    string Pool,
+    string Algorithm,
+    string? HashrateUnit,
+    double MiningSeconds,
+    double TotalHashrateDays);
+
+/// <summary>
+/// Monotonic lifetime counters persisted by the 24/7 agent on the node itself, surviving reboots
+/// and weeks with the operator's console closed.
+/// </summary>
+public sealed record NodeLifetimeDto
+{
+    public DateTimeOffset StartedAt { get; init; }
+    public DateTimeOffset UpdatedAt { get; init; }
+    public double ActiveMiningSeconds { get; init; }
+    public double CpuMiningSeconds { get; init; }
+    public double GpuMiningSeconds { get; init; }
+    /// <summary>Integrated CPU hashes (<c>H/s * seconds</c>) while xmrig was actively hashing.</summary>
+    public double TotalCpuHashes { get; init; }
+    /// <summary>Integrated machine energy in kWh while either miner was running.</summary>
+    public double TotalEnergyKwh { get; init; }
+    /// <summary>Subset of <see cref="ActiveMiningSeconds"/> during which the agent had a positive power reading.</summary>
+    public double PoweredMiningSeconds { get; init; }
+    public IReadOnlyList<GpuLifetimeBucketDto> GpuBuckets { get; init; } = [];
 }
 
 /// <summary>A running game remains visible even when miners keep working alongside it.</summary>

@@ -524,11 +524,18 @@ internal sealed class EconomicsScreenReport(FleetConfig config, FleetService fle
         await Task.WhenAll(pollTask, networkTask, walletTask, priceTask);
 
         var states = pollTask.Result;
+        var lifetimeLedger = LifetimeIncomeLedger.For(config);
         var gpuQuotesTask = gpuPool.ResolveQuotesAsync(states, config, fleet, ct);
+        var coinQuotesTask = gpuPool.ResolveCoinQuotesAsync(
+            lifetimeLedger.KnownGpuCoinSlugs(states, config),
+            config.Electricity.Currency,
+            ct);
         var moneyTask = market.GetMoneyFormatAsync(ct);
-        await Task.WhenAll(gpuQuotesTask, moneyTask);
+        await Task.WhenAll(gpuQuotesTask, coinQuotesTask, moneyTask);
 
         var economics = Economics.Calculate(states, config, networkTask.Result, priceTask.Result, gpuQuotesTask.Result);
+        var lifetime = lifetimeLedger.UpdateAndCalculate(
+            states, config, networkTask.Result, priceTask.Result, coinQuotesTask.Result, gpuQuotesTask.Result);
         var currency = economics.Currency;
         var credited = walletTask.Result?.CreditedTodayXmr;
         var money = moneyTask.Result;
@@ -557,6 +564,12 @@ internal sealed class EconomicsScreenReport(FleetConfig config, FleetService fle
             : "-");
         table.AddRow("Net profit per day", money.Signed(economics.TotalProfitPerDay));
         table.AddRow("Cost per XMR", money.Markup(economics.CostPerXmr));
+        if (lifetime.AnyTracked)
+        {
+            table.AddRow($"All-time income, {UiHelpers.Escape(currency)}", EconomicsScreen.FormatLifetimeIncomeMarkup(lifetime, money));
+            table.AddRow("All-time electricity", $"{lifetime.TotalEnergyKwh:N2} kWh  ({money.Markup(lifetime.TotalElectricityCost)})");
+            table.AddRow("All-time net profit", lifetime.TotalNetProfit is { } anp ? money.Signed(anp) : "[grey]-[/]");
+        }
         AnsiConsole.Write(table);
 
         if (states.Any(s => s.AnyMining))
@@ -568,6 +581,12 @@ internal sealed class EconomicsScreenReport(FleetConfig config, FleetService fle
                 AnsiConsole.WriteLine();
                 AnsiConsole.Write(charts);
             }
+        }
+
+        if (lifetime.Nodes.Count > 0)
+        {
+            AnsiConsole.WriteLine();
+            AnsiConsole.Write(EconomicsScreen.BuildLifetimeTable(lifetime, money));
         }
     }
 }

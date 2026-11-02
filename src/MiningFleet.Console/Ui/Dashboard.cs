@@ -17,6 +17,7 @@ public sealed class Dashboard : IDisposable
     private readonly MarketService _market;
     private readonly XtmIncomeService _xtm = new();
     private readonly GpuIncomeService _gpuIncome;
+    private readonly LifetimeIncomeLedger _lifetime;
 
     private PoolNetworkStats? _network;
     private double? _price;
@@ -35,6 +36,7 @@ public sealed class Dashboard : IDisposable
         _fleet = fleet;
         _market = market;
         _gpuIncome = new GpuIncomeService(new GpuPoolService(), GpuIncomeLedger.For(config));
+        _lifetime = LifetimeIncomeLedger.For(config);
     }
 
     public async Task ShowAsync(CancellationToken ct)
@@ -62,9 +64,14 @@ public sealed class Dashboard : IDisposable
                     _sparklines.Record(states);
                     await RefreshXtmAsync(states, _xtm, ct);
                     var gpuQuotes = await _gpuIncome.ResolveQuotesAsync(states, _config, _fleet, ct, _gpuTargets);
+                    var coinQuotes = await _gpuIncome.ResolveCoinQuotesAsync(
+                        _lifetime.KnownGpuCoinSlugs(states, _config),
+                        _config.Electricity.Currency,
+                        ct);
                     var economics = Economics.Calculate(states, _config, _network, _price, gpuQuotes);
+                    var lifetime = _lifetime.UpdateAndCalculate(states, _config, _network, _price, coinQuotes, gpuQuotes);
 
-                    ctx.UpdateTarget(Compose(states, economics));
+                    ctx.UpdateTarget(Compose(states, economics, lifetime));
                     ctx.Refresh();
 
                     if (await WaitOrKeyAsync(interval, ct)) return;
@@ -151,7 +158,7 @@ public sealed class Dashboard : IDisposable
         _gpuIncomeRows = gpuRows;
     }
 
-    private IRenderable Compose(IReadOnlyList<NodeState> states, FleetEconomics economics) =>
+    private IRenderable Compose(IReadOnlyList<NodeState> states, FleetEconomics economics, FleetLifetimeSummary lifetime) =>
         RenderView(
             states,
             economics,
@@ -161,7 +168,8 @@ public sealed class Dashboard : IDisposable
             _xtmIncome,
             _gpuIncomeRows,
             DateTimeOffset.UtcNow,
-            _sparklines);
+            _sparklines,
+            lifetime);
 
     public static IRenderable RenderView(
         IReadOnlyList<NodeState> states,
@@ -172,11 +180,13 @@ public sealed class Dashboard : IDisposable
         IReadOnlyList<XtmIncomeRow> xtmIncome,
         IReadOnlyList<GpuIncomeRow> gpuIncomeRows,
         DateTimeOffset now,
-        SparklineHistory? sparklines = null)
+        SparklineHistory? sparklines = null,
+        FleetLifetimeSummary? lifetime = null)
     {
         // Twelve columns already wrap an 80-column terminal, so the GPU pair only appears when
         // some node in the fleet actually has a card mining. A fleet with none loses nothing.
         var showGpu = states.Any(s => s.Gpu is not null);
+        var showLifetime = lifetime is { AnyTracked: true };
 
         var table = new Table()
             .Border(TableBorder.Rounded)
@@ -201,9 +211,12 @@ public sealed class Dashboard : IDisposable
                 .AddColumn(new TableColumn("GPU sh").RightAligned());
         }
 
-        table
-            .AddColumn(new TableColumn("Income/d").RightAligned().NoWrap())
-            .AddColumn(new TableColumn("Uptime").RightAligned());
+        table.AddColumn(new TableColumn("Income/d").RightAligned().NoWrap());
+        if (showLifetime)
+        {
+            table.AddColumn(new TableColumn("All-time").RightAligned().NoWrap());
+        }
+        table.AddColumn(new TableColumn("Uptime").RightAligned());
 
         foreach (var state in states.OrderBy(s => s.Node.Name, StringComparer.OrdinalIgnoreCase))
         {
@@ -243,6 +256,10 @@ public sealed class Dashboard : IDisposable
             }
 
             cells.Add(new Markup(FormatNodeIncomeMarkup(nodeEconomics, money)));
+            if (showLifetime)
+            {
+                cells.Add(new Markup(FormatNodeLifetimeMarkup(lifetime!.ForNode(state.Node.Name), money)));
+            }
             cells.Add(new Markup(miner is { Running: true }
                 ? Economics.FormatDuration(miner.UptimeSeconds)
                 : "[grey]-[/]"));
@@ -295,6 +312,16 @@ public sealed class Dashboard : IDisposable
                 Cell("Net profit/day", money.Signed(economics.TotalProfitPerDay ?? economics.ProfitPerDay)));
 
             totalsNote = "[grey]Net profit = live XMR income minus the displayed power cost.[/]";
+        }
+
+        if (showLifetime)
+        {
+            summary.AddRow(
+                Cell("All-time income", EconomicsScreen.FormatLifetimeIncomeMarkup(lifetime!, money)),
+                Cell("All-time power", $"{lifetime!.TotalEnergyKwh:N2} kWh  {money.Markup(lifetime.TotalElectricityCost)}"),
+                Cell("All-time net", lifetime.TotalNetProfit is { } allNet
+                    ? money.Signed(allNet)
+                    : "[grey]needs pool prices[/]"));
         }
 
         var footer = new Markup(
@@ -350,6 +377,28 @@ public sealed class Dashboard : IDisposable
         if (economics.KnownRevenuePerDay is { } known && economics.HasMissingRevenue)
             return $"{money.Markup(known)} [yellow](partial)[/]";
         return "[grey]needs pool data[/]";
+    }
+
+    public static string FormatNodeLifetimeMarkup(NodeLifetimeSummary? node, MoneyFormat money)
+    {
+        if (node is null) return "[grey]-[/]";
+        if (!node.HasData) return node.NeedsAgentUpgrade ? "[yellow]upgrade[/]" : "[grey]-[/]";
+
+        if (node.TotalRevenue is { } total)
+        {
+            var netLine = node.NetProfit is { } net && (total > 0 || node.ElectricityCost > 0)
+                ? $"\n[grey]net[/] {money.CompactSigned(net)}"
+                : "";
+            return $"{money.CompactMarkup(total)}{netLine}";
+        }
+
+        if (node.KnownRevenue is { } known && node.HasMissingRevenue)
+        {
+            var missing = node.GpuRevenueMissing ? "+ GPU ?" : "+ CPU ?";
+            return $"{money.CompactMarkup(known)}\n[yellow]{missing}[/]";
+        }
+
+        return "[grey]?[/]";
     }
 
     private static IRenderable Cell(string label, string value) => new Markup($"[grey]{UiHelpers.Escape(label)}[/]  {value}");

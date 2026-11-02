@@ -60,6 +60,7 @@ public sealed class AgentUpdateTests
     [InlineData("appsettings.json")]           // the fleet token
     [InlineData("xmrig-api.token")]            // the miner's API token; losing it blanks hashrate
     [InlineData("miner.json")]                 // the pushed pool and wallet
+    [InlineData("lifetime.json")]              // cumulative hashes and kWh across updates
     public void Node_identity_files_are_never_overwritten(string fileName)
     {
         Assert.Contains(fileName, AgentUpdateService.ProtectedFileNames, StringComparer.OrdinalIgnoreCase);

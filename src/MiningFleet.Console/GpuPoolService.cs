@@ -352,17 +352,7 @@ public sealed class GpuPoolService : IDisposable
             if (coin is not null) nodeCoins.Add((state, coin));
         }
 
-        var currency = config.Electricity.Currency;
-        var byCoin = new Dictionary<string, NodeGpuQuote>(StringComparer.OrdinalIgnoreCase);
-        foreach (var coin in nodeCoins.Select(n => n.Coin).Distinct(StringComparer.OrdinalIgnoreCase))
-        {
-            var rateTask = GetPoolRateAsync(coin, ct);
-            var priceTask = GetCoinPriceAsync(coin, currency, ct);
-            await Task.WhenAll(rateTask, priceTask);
-            var rate = rateTask.Result;
-            var ticker = rate?.Ticker ?? coin.Split('-')[0].ToUpperInvariant();
-            byCoin[coin] = new NodeGpuQuote(ticker, rate?.CoinsPerHashrateDay, priceTask.Result);
-        }
+        var byCoin = await ResolveCoinQuotesAsync(nodeCoins.Select(n => n.Coin), config.Electricity.Currency, ct);
 
         var quotes = new Dictionary<string, NodeGpuQuote>(StringComparer.OrdinalIgnoreCase);
         foreach (var (state, coin) in nodeCoins)
@@ -372,6 +362,33 @@ public sealed class GpuPoolService : IDisposable
         }
 
         return quotes;
+    }
+
+    /// <summary>
+    /// Resolves pool yield and spot price keyed by canonical Kryptex coin slug (e.g. <c>prl</c>,
+    /// <c>xtm-c29</c>), using the shared caches so paused or historical coins cost at most one lookup.
+    /// </summary>
+    public async Task<IReadOnlyDictionary<string, NodeGpuQuote>> ResolveCoinQuotesAsync(
+        IEnumerable<string> coinSlugs,
+        string currency,
+        CancellationToken ct)
+    {
+        var byCoin = new Dictionary<string, NodeGpuQuote>(StringComparer.OrdinalIgnoreCase);
+        foreach (var raw in coinSlugs)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) continue;
+            var coin = raw.Trim().ToLowerInvariant();
+            if (byCoin.ContainsKey(coin)) continue;
+
+            var rateTask = GetPoolRateAsync(coin, ct);
+            var priceTask = GetCoinPriceAsync(coin, currency, ct);
+            await Task.WhenAll(rateTask, priceTask);
+            var rate = rateTask.Result;
+            var ticker = rate?.Ticker ?? coin.Split('-')[0].ToUpperInvariant();
+            byCoin[coin] = new NodeGpuQuote(ticker, rate?.CoinsPerHashrateDay, priceTask.Result);
+        }
+
+        return byCoin;
     }
 
     /// <summary>

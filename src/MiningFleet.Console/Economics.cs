@@ -67,13 +67,7 @@ public static class Economics
         var watts = list.Where(n => n.AnyMining).Sum(n => n.PowerWatts);
         var costPerDay = list.Where(n => n.AnyMining).Sum(n => DailyCost(n, config));
 
-        double? xmrPerHashDay = null;
-        if (network?.NetworkHashrate is > 0 && network.BlockRewardXmr is > 0)
-        {
-            var blockTime = network.BlockTimeSeconds > 0 ? network.BlockTimeSeconds : MarketService.DefaultBlockTimeSeconds;
-            var blocksPerDay = 86400.0 / blockTime;
-            xmrPerHashDay = blocksPerDay * network.BlockRewardXmr.Value / network.NetworkHashrate.Value;
-        }
+        var xmrPerHashDay = XmrPerHashDay(network);
 
         double? xmrPerDay = xmrPerHashDay is not null && hashrate > 0 ? hashrate * xmrPerHashDay.Value : null;
         var revenuePerDay = xmrPerDay is not null && price is not null ? xmrPerDay * price : null;
@@ -213,6 +207,17 @@ public static class Economics
             knownRevenue,
             cpuMissing,
             gpuMissing);
+    }
+
+    public static double? XmrPerHashDay(PoolNetworkStats? network)
+    {
+        if (network?.NetworkHashrate is > 0 && network.BlockRewardXmr is > 0)
+        {
+            var blockTime = network.BlockTimeSeconds > 0 ? network.BlockTimeSeconds : MarketService.DefaultBlockTimeSeconds;
+            var blocksPerDay = 86400.0 / blockTime;
+            return blocksPerDay * network.BlockRewardXmr.Value / network.NetworkHashrate.Value;
+        }
+        return null;
     }
 
     public static double DailyCost(NodeState node, FleetConfig config) =>

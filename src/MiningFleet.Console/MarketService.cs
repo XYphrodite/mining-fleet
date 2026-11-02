@@ -24,6 +24,10 @@ public sealed record PoolWalletStats(
         ConfirmedBalanceXmr is null && UnconfirmedBalanceXmr is null
             ? null
             : (ConfirmedBalanceXmr ?? 0) + (UnconfirmedBalanceXmr ?? 0);
+
+    /// <summary>All-time XMR earned by this wallet on the pool: paid out plus pending.</summary>
+    public double? EarnedXmr =>
+        PendingXmr is { } pending && TotalPaidXmr is { } paid ? pending + paid : null;
 }
 
 /// <summary>Network and pool figures used for the income estimate.</summary>
