@@ -18,7 +18,7 @@ public sealed class SelfUpdateWiringTests
 
         Assert.Equal("XYphrodite/mining-fleet", options.Repository);
         Assert.Contains("XYphrodite/xmrig-fleet", options.FallbackRepositories);
-        Assert.Equal(ReleaseAssets.AgentZipNames, options.ExecutableAssetNames);
+        Assert.Equal(ReleaseAssets.AgentZipNamesFor(FleetAgentUpdate.PreferredVariant()), options.ExecutableAssetNames);
         Assert.Equal(AgentIdentity.ExeFileNames, options.ProbeExecutableNames);
         Assert.True(options.ApplyPayloadImmediately);
         Assert.Equal([(byte)'P', (byte)'K'], options.ExpectedMagic);
@@ -39,7 +39,7 @@ public sealed class SelfUpdateWiringTests
         var options = FleetConsoleUpdate.Options(new UpdateConfig { Repository = "XYphrodite/xmrig-fleet" });
 
         Assert.Equal(["XYphrodite/xmrig-fleet", "XYphrodite/mining-fleet"], options.FallbackRepositories.Prepend(options.Repository));
-        Assert.Equal(ReleaseAssets.ConsoleZipNames, options.ExecutableAssetNames);
+        Assert.Equal(ReleaseAssets.ConsoleZipNamesFor(FleetConsoleUpdate.PreferredVariant()), options.ExecutableAssetNames);
         Assert.True(options.ApplyPayloadImmediately);
     }
 

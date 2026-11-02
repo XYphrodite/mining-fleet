@@ -74,17 +74,30 @@ $VariantMarker = '.mining-fleet-variant'
 
 function Test-DotNetRuntimeLine {
     param([string]$Line, [string]$Major = $DotNetMajor)
+    if ($Line -match 'Program Files \(x86\)') { return $false }
     return [bool]($Line -match "^Microsoft\.(NETCore|WindowsDesktop)\.App\s+$Major\.")
 }
 
+function Test-DotNetAspNetRuntimeLine {
+    param([string]$Line, [string]$Major = $DotNetMajor)
+    if ($Line -match 'Program Files \(x86\)') { return $false }
+    return [bool]($Line -match "^Microsoft\.AspNetCore\.App\s+$Major\.")
+}
+
 function Test-DotNetRuntime {
+    $dotnetCmd = if (Test-Path "$env:ProgramFiles\dotnet\dotnet.exe") { "$env:ProgramFiles\dotnet\dotnet.exe" } else { 'dotnet' }
     try {
-        $runtimes = & dotnet --list-runtimes 2>$null
+        $runtimes = & $dotnetCmd --list-runtimes 2>$null
     } catch {
         return $false
     }
+    $hasBase = $false
+    $hasAspNet = $false
     foreach ($line in @($runtimes)) {
-        if (Test-DotNetRuntimeLine -Line ([string]$line)) { return $true }
+        $s = [string]$line
+        if (-not $hasBase -and (Test-DotNetRuntimeLine -Line $s)) { $hasBase = $true }
+        if (-not $hasAspNet -and (Test-DotNetAspNetRuntimeLine -Line $s)) { $hasAspNet = $true }
+        if ($hasBase -and $hasAspNet) { return $true }
     }
     return $false
 }
@@ -170,6 +183,22 @@ if ($stray) {
 
 Write-Host "Copying agent to $InstallPath"
 New-Item -ItemType Directory -Force -Path $InstallPath | Out-Null
+# Remove retired *.old* leftovers and, when switching a Full installation to Light, clear
+# self-contained runtime DLLs (hostfxr.dll, coreclr.dll, etc.) that are absent from Light.
+Get-ChildItem -Path $InstallPath -File -Recurse -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -like '*.old' -or $_.Name -like '*.old-*' } |
+    ForEach-Object { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue }
+if ($variantName -eq 'light') {
+    $protectedNames = @('appsettings.json', 'appsettings.Production.json', 'xmrig-api.token', 'miner.json', 'lifetime.json', 'game-mining.json', $VariantMarker)
+    Get-ChildItem -Path $InstallPath -File -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+        if ($protectedNames -contains $_.Name) { return }
+        $rel = $_.FullName.Substring($InstallPath.TrimEnd('\', '/').Length).TrimStart('\', '/')
+        if (Test-Path (Join-Path $SourcePath $rel)) { return }
+        if ($_.Extension -in @('.dll', '.pdb', '.mib', '.nib') -or $_.Name -eq 'createdump.exe' -or $_.Name -like '*.deps.json' -or $_.Name -like '*.runtimeconfig.json' -or $_.Name -like '*.staticwebassets.endpoints.json') {
+            Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
 Copy-Item -Path (Join-Path $SourcePath '*') -Destination $InstallPath -Recurse -Force
 $modernExe = Join-Path $InstallPath 'mining-fleet-agent.exe'
 $legacyExe = Join-Path $InstallPath 'xmrig-fleet-agent.exe'

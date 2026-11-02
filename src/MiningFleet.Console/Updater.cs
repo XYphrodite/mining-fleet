@@ -29,9 +29,24 @@ public static class Updater
             return 0;
         }
 
-        AnsiConsole.MarkupLine(
-            $"[yellow]{UpdateService.CurrentVersion}[/] -> [green]{update.Version}[/]  " +
-            $"[grey]{UiHelpers.Escape(update.AssetName)}, {Size(update.SizeBytes)}[/]");
+        var current = UpdateService.CurrentVersion;
+        var sameBuild = current.Major == update.Version.Major
+                        && current.Minor == update.Version.Minor
+                        && current.Build == update.Version.Build;
+        var targetVariant = update.AssetName.EndsWith("-light.zip", StringComparison.OrdinalIgnoreCase) ? "light" : "full";
+        if (sameBuild)
+        {
+            var runningVariant = FleetConsoleUpdate.InstalledVariant() == MiningFleet.Contracts.FleetVariant.Light ? "light" : "full";
+            AnsiConsole.MarkupLine(
+                $"[yellow]{current.ToString(3)} ({runningVariant})[/] -> [green]{update.Version} ({targetVariant})[/]  " +
+                $"[grey]{UiHelpers.Escape(update.AssetName)}, {Size(update.SizeBytes)}[/]");
+        }
+        else
+        {
+            AnsiConsole.MarkupLine(
+                $"[yellow]{current}[/] -> [green]{update.Version}[/]  " +
+                $"[grey]{UiHelpers.Escape(update.AssetName)}, {Size(update.SizeBytes)}[/]");
+        }
 
         if (!string.IsNullOrWhiteSpace(update.Notes))
         {
@@ -115,9 +130,22 @@ public static class Updater
 
             if (await service.CheckAsync(timeout.Token) is { } update)
             {
-                AnsiConsole.MarkupLine(
-                    $"[yellow]mining-fleet {update.Version} is available[/] [grey](running {UpdateService.CurrentVersion}) - " +
-                    "run 'mining-fleet update'[/]");
+                var current = UpdateService.CurrentVersion;
+                var sameBuild = current.Major == update.Version.Major
+                                && current.Minor == update.Version.Minor
+                                && current.Build == update.Version.Build;
+                if (sameBuild && update.AssetName.EndsWith("-light.zip", StringComparison.OrdinalIgnoreCase))
+                {
+                    AnsiConsole.MarkupLine(
+                        $"[yellow]mining-fleet {update.Version} light build is available for this PC[/] [grey](running full) - " +
+                        "run 'mining-fleet update'[/]");
+                }
+                else
+                {
+                    AnsiConsole.MarkupLine(
+                        $"[yellow]mining-fleet {update.Version} is available[/] [grey](running {current}) - " +
+                        "run 'mining-fleet update'[/]");
+                }
             }
         }
         catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or TaskCanceledException or OperationCanceledException)

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 
 namespace MiningFleet.Contracts;
@@ -83,18 +84,92 @@ public static class ReleaseAssets
     public static IReadOnlyList<string> AgentZipNamesFor(FleetVariant variant) => Names(agent: true, variant);
 
     /// <summary>
-    /// One <c>dotnet --list-runtimes</c> line that satisfies the light package:
+    /// One <c>dotnet --list-runtimes</c> line that satisfies the base .NET runtime:
     /// <c>Microsoft.NETCore.App &lt;major&gt;.*</c>, or
     /// <c>Microsoft.WindowsDesktop.App &lt;major&gt;.*</c> (the desktop bundle
-    /// includes the base runtime). The major must equal the app target-framework
-    /// major. Same rule as the install scripts' Test-DotNetRuntimeLine.
+    /// includes the base runtime). Rejects 32-bit x86 runtimes when running in a 64-bit process.
     /// </summary>
-    public static bool IsCompatibleRuntimeLine(string? line, string? major = null)
+    public static bool IsCompatibleRuntimeLine(string? line, string? major = null) =>
+        MatchesFrameworkLine(line, major ?? DotNetMajor, "Microsoft.NETCore.App ", "Microsoft.WindowsDesktop.App ");
+
+    /// <summary>
+    /// One <c>dotnet --list-runtimes</c> line that satisfies the ASP.NET Core shared framework
+    /// needed by the light agent build (<c>Microsoft.NET.Sdk.Web</c>).
+    /// </summary>
+    public static bool IsCompatibleAspNetRuntimeLine(string? line, string? major = null) =>
+        MatchesFrameworkLine(line, major ?? DotNetMajor, "Microsoft.AspNetCore.App ");
+
+    /// <summary>
+    /// Whether the given <c>dotnet --list-runtimes</c> output satisfies the light build:
+    /// the console needs <c>Microsoft.NETCore.App</c> (or <c>WindowsDesktop.App</c>), whereas
+    /// the web-SDK agent additionally needs <c>Microsoft.AspNetCore.App</c>.
+    /// </summary>
+    public static bool CanRunLight(IEnumerable<string?> runtimeLines, bool agent, string? major = null)
+    {
+        major ??= DotNetMajor;
+        var hasBase = false;
+        var hasAspNet = !agent;
+
+        foreach (var line in runtimeLines)
+        {
+            if (!hasBase && IsCompatibleRuntimeLine(line, major)) hasBase = true;
+            if (!hasAspNet && IsCompatibleAspNetRuntimeLine(line, major)) hasAspNet = true;
+            if (hasBase && hasAspNet) return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Selects the variant an update should install on this machine: whenever the PC can run
+    /// the light build, light wins (even when upgrading an older full installation), unless
+    /// explicitly forced via <c>MINING_FLEET_VARIANT=full</c>. Falls back to full when the
+    /// required shared runtime is absent.
+    /// </summary>
+    public static FleetVariant PreferredVariant(
+        bool agent,
+        IEnumerable<string?>? runtimeLines = null,
+        string? variantOverride = null)
+    {
+        var forced = (variantOverride
+                      ?? Environment.GetEnvironmentVariable("MINING_FLEET_VARIANT")
+                      ?? Environment.GetEnvironmentVariable("XMRIG_FLEET_VARIANT"))?.Trim();
+        if (string.Equals(forced, "full", StringComparison.OrdinalIgnoreCase))
+            return FleetVariant.Full;
+
+        var lines = runtimeLines ?? DotNetRuntimeLines();
+        return CanRunLight(lines, agent) ? FleetVariant.Light : FleetVariant.Full;
+    }
+
+    /// <summary>
+    /// Reads installed .NET shared runtimes on this machine, checking the 64-bit system
+    /// <c>Program Files\dotnet</c> host before <c>PATH</c> so Windows services under
+    /// <c>LocalSystem</c> find the runtime even with a minimal service <c>PATH</c>.
+    /// </summary>
+    public static IReadOnlyList<string> DotNetRuntimeLines()
+    {
+        foreach (var candidate in DotNetHostCandidates())
+        {
+            if (TryListRuntimesFromProcess(candidate, out var lines) && lines.Count > 0)
+                return lines;
+        }
+
+        return ScanSharedFrameworkDirectories();
+    }
+
+    private static bool MatchesFrameworkLine(string? line, string major, params string[] prefixes)
     {
         if (string.IsNullOrWhiteSpace(line)) return false;
-        major ??= DotNetMajor;
         var text = line.Trim();
-        foreach (var runtime in (string[])[ "Microsoft.NETCore.App ", "Microsoft.WindowsDesktop.App "])
+
+        // A 32-bit runtime in Program Files (x86) cannot run a 64-bit light binary.
+        if (Environment.Is64BitProcess
+            && text.Contains("Program Files (x86)", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        foreach (var runtime in prefixes)
         {
             if (!text.StartsWith(runtime, StringComparison.Ordinal)) continue;
             var version = text[runtime.Length..].Trim();
@@ -102,6 +177,111 @@ public static class ReleaseAssets
         }
 
         return false;
+    }
+
+    private static IEnumerable<string> DotNetHostCandidates()
+    {
+        var exe = OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet";
+        var envRoot = Environment.GetEnvironmentVariable("DOTNET_ROOT");
+        if (!string.IsNullOrWhiteSpace(envRoot))
+        {
+            var fromEnv = Path.Combine(envRoot.Trim(), exe);
+            if (File.Exists(fromEnv)) yield return fromEnv;
+        }
+
+        if (OperatingSystem.IsWindows())
+        {
+            var pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+            if (!string.IsNullOrWhiteSpace(pf))
+            {
+                var systemHost = Path.Combine(pf, "dotnet", "dotnet.exe");
+                if (File.Exists(systemHost)) yield return systemHost;
+            }
+        }
+        else
+        {
+            foreach (var root in (string[])["/usr/share/dotnet", "/usr/lib/dotnet", "/usr/local/share/dotnet"])
+            {
+                var host = Path.Combine(root, "dotnet");
+                if (File.Exists(host)) yield return host;
+            }
+        }
+
+        yield return "dotnet";
+    }
+
+    private static bool TryListRuntimesFromProcess(string fileName, out IReadOnlyList<string> lines)
+    {
+        lines = [];
+        try
+        {
+            var psi = new ProcessStartInfo(fileName)
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            psi.ArgumentList.Add("--list-runtimes");
+
+            using var process = Process.Start(psi);
+            if (process is null) return false;
+
+            var output = process.StandardOutput.ReadToEnd();
+            if (!process.WaitForExit(4000))
+            {
+                try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
+                return false;
+            }
+
+            if (process.ExitCode != 0) return false;
+            lines = output
+                .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .ToArray();
+            return true;
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
+        {
+            return false;
+        }
+    }
+
+    private static IReadOnlyList<string> ScanSharedFrameworkDirectories()
+    {
+        var roots = new List<string>();
+        var envRoot = Environment.GetEnvironmentVariable("DOTNET_ROOT");
+        if (!string.IsNullOrWhiteSpace(envRoot)) roots.Add(envRoot.Trim());
+        if (OperatingSystem.IsWindows())
+        {
+            var pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+            if (!string.IsNullOrWhiteSpace(pf)) roots.Add(Path.Combine(pf, "dotnet"));
+        }
+        else
+        {
+            roots.AddRange(["/usr/share/dotnet", "/usr/lib/dotnet", "/usr/local/share/dotnet"]);
+        }
+
+        var lines = new List<string>();
+        foreach (var root in roots.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var shared = Path.Combine(root, "shared");
+            if (!Directory.Exists(shared)) continue;
+            foreach (var fw in (string[])["Microsoft.NETCore.App", "Microsoft.WindowsDesktop.App", "Microsoft.AspNetCore.App"])
+            {
+                var fwDir = Path.Combine(shared, fw);
+                if (!Directory.Exists(fwDir)) continue;
+                try
+                {
+                    foreach (var verDir in Directory.EnumerateDirectories(fwDir))
+                        lines.Add($"{fw} {Path.GetFileName(verDir)} [{fwDir}]");
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                }
+            }
+        }
+
+        return lines;
     }
 
     /// <summary>

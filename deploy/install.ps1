@@ -54,12 +54,14 @@ $VariantMarker = '.mining-fleet-variant'
 
 function Test-DotNetRuntimeLine {
     param([string]$Line, [string]$Major = $DotNetMajor)
+    if ($Line -match 'Program Files \(x86\)') { return $false }
     return [bool]($Line -match "^Microsoft\.(NETCore|WindowsDesktop)\.App\s+$Major\.")
 }
 
 function Test-DotNetRuntime {
+    $dotnetCmd = if (Test-Path "$env:ProgramFiles\dotnet\dotnet.exe") { "$env:ProgramFiles\dotnet\dotnet.exe" } else { 'dotnet' }
     try {
-        $runtimes = & dotnet --list-runtimes 2>$null
+        $runtimes = & $dotnetCmd --list-runtimes 2>$null
     } catch {
         return $false
     }
@@ -181,14 +183,30 @@ foreach ($name in 'mining-fleet.exe', 'xmrig-fleet.exe') {
         try { Move-Item $_.FullName "$($_.FullName).old" -Force } catch { }
     }
 }
-Get-ChildItem -Path $target -Filter '*.old' -Recurse -ErrorAction SilentlyContinue |
-    ForEach-Object { try { Remove-Item $_.FullName -Force } catch { } }
 
+$stageDir = Join-Path ([IO.Path]::GetTempPath()) "mining-fleet-stage-$([guid]::NewGuid().ToString('N'))"
 try {
-    Expand-Archive -Path $archive -DestinationPath $target -Force
+    Expand-Archive -Path $archive -DestinationPath $stageDir -Force
+    if ($variantName -eq 'light') {
+        $protectedNames = @('fleet.json', 'gpu-income.json', 'lifetime-income.json', $VariantMarker)
+        Get-ChildItem -Path $target -File -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+            if ($protectedNames -contains $_.Name -or $_.Name -like '*.old' -or $_.Name -like '*.old-*') { return }
+            $rel = $_.FullName.Substring($target.TrimEnd('\', '/').Length).TrimStart('\', '/')
+            if (Test-Path (Join-Path $stageDir $rel)) { return }
+            if ($_.Extension -in @('.dll', '.pdb', '.mib', '.nib') -or $_.Name -eq 'createdump.exe' -or $_.Name -like '*.deps.json' -or $_.Name -like '*.runtimeconfig.json') {
+                try { Remove-Item $_.FullName -Force -ErrorAction Stop }
+                catch { try { Move-Item $_.FullName "$($_.FullName).old" -Force } catch { } }
+            }
+        }
+    }
+    Copy-Item -Path (Join-Path $stageDir '*') -Destination $target -Recurse -Force
 } finally {
     Remove-Item $archive -Force -ErrorAction SilentlyContinue
+    Remove-Item $stageDir -Recurse -Force -ErrorAction SilentlyContinue
 }
+Get-ChildItem -Path $target -File -Recurse -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -like '*.old' -or $_.Name -like '*.old-*' } |
+    ForEach-Object { try { Remove-Item $_.FullName -Force } catch { } }
 
 $exe = Get-ChildItem -Path $target -Filter 'mining-fleet.exe' -Recurse | Select-Object -First 1
 if (-not $exe) { $exe = Get-ChildItem -Path $target -Filter 'xmrig-fleet.exe' -Recurse | Select-Object -First 1 }

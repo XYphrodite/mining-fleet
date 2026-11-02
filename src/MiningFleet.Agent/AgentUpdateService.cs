@@ -71,13 +71,30 @@ public sealed class AgentUpdateService
         if (!string.IsNullOrWhiteSpace(request.DownloadUrl))
             return await UpdateFromUrlAsync(request.DownloadUrl!, from, ct);
 
-        var options = FleetAgentUpdate.Options();
-        using var source = new GitHubReleaseSource(options);
+        var preferred = FleetAgentUpdate.PreferredVariant();
+        var installed = FleetAgentUpdate.InstalledVariant();
+        var normalizedTag = FleetAgentUpdate.NormalizeTag(request.Version);
 
         ReleaseDescriptor release;
+        var chosenVariant = preferred;
         try
         {
-            release = await source.ResolveAsync(FleetAgentUpdate.NormalizeTag(request.Version), ct);
+            using var source = new GitHubReleaseSource(FleetAgentUpdate.Options(preferred));
+            release = await source.ResolveAsync(normalizedTag, ct);
+        }
+        catch (InvalidDataException) when (preferred == FleetVariant.Light)
+        {
+            chosenVariant = FleetVariant.Full;
+            try
+            {
+                using var fallbackSource = new GitHubReleaseSource(FleetAgentUpdate.Options(FleetVariant.Full));
+                release = await fallbackSource.ResolveAsync(normalizedTag, ct);
+            }
+            catch (Exception ex) when (ex is HttpRequestException or InvalidDataException)
+            {
+                _log.LogError(ex, "Agent update failed");
+                return new AgentUpdateResultDto(false, ex.Message, from, null, false);
+            }
         }
         catch (Exception ex) when (ex is HttpRequestException or InvalidDataException)
         {
@@ -85,26 +102,37 @@ public sealed class AgentUpdateService
             return new AgentUpdateResultDto(false, ex.Message, from, null, false);
         }
 
-        if (!request.Force && IsSameVersion(from, release.Tag))
-            return new AgentUpdateResultDto(true, $"Already running {from}; nothing to do.", from, release.Tag, false);
+        var variantSwitchWanted = installed != chosenVariant;
+        if (!request.Force && !variantSwitchWanted && IsSameVersion(from, release.Tag))
+        {
+            var currentLabel = installed == FleetVariant.Light ? "light" : "full";
+            return new AgentUpdateResultDto(true, $"Already running {from} ({currentLabel}); nothing to do.", from, release.Tag, false);
+        }
 
         try
         {
-            _log.LogInformation("Agent update: installing {Tag}", release.Tag);
-            var service = new SelfUpdateService(
-                FleetAgentUpdate.InstalledExePath(),
-                FleetAgentUpdate.InstalledVersion(),
-                source,
-                options,
-                probe: FleetAgentUpdate.ProbeExecutableAsync);
-            var report = await service.UpdateAsync(new SelfUpdateRequest(Tag: release.Tag), ct);
-            _log.LogWarning("Agent update: replaced, restarting into {Version}", report.Tag);
+            SelfUpdateReport report;
+            try
+            {
+                report = await ApplyVariantAsync(chosenVariant, release, ct);
+            }
+            catch (InvalidDataException ex) when (chosenVariant == FleetVariant.Light)
+            {
+                _log.LogWarning(ex, "Light agent payload could not run on this machine; falling back to full package");
+                chosenVariant = FleetVariant.Full;
+                using var fullSource = new GitHubReleaseSource(FleetAgentUpdate.Options(FleetVariant.Full));
+                var fullRelease = await fullSource.ResolveAsync(release.Tag, ct);
+                report = await ApplyVariantAsync(FleetVariant.Full, fullRelease, ct);
+            }
+
+            var variantLabel = chosenVariant == FleetVariant.Light ? "light" : "full";
+            _log.LogWarning("Agent update: replaced ({Variant}), restarting into {Version}", variantLabel, report.Tag);
 
             ScheduleRestart();
 
             return new AgentUpdateResultDto(
                 true,
-                $"Updated from {from} to {report.Tag}. Restarting; the miner keeps running.",
+                $"Updated from {from} to {report.Tag} ({variantLabel}). Restarting; the miner keeps running.",
                 from,
                 report.Tag,
                 true);
@@ -114,6 +142,29 @@ public sealed class AgentUpdateService
             _log.LogError(ex, "Agent update failed");
             return new AgentUpdateResultDto(false, ex.Message, from, null, false);
         }
+    }
+
+    private async Task<SelfUpdateReport> ApplyVariantAsync(
+        FleetVariant variant,
+        ReleaseDescriptor release,
+        CancellationToken ct)
+    {
+        var variantLabel = variant == FleetVariant.Light ? "light" : "full";
+        _log.LogInformation("Agent update: installing {Tag} ({Variant})", release.Tag, variantLabel);
+        var options = FleetAgentUpdate.Options(variant);
+        using var source = new GitHubReleaseSource(options);
+        var session = new VariantSwapSession(
+            InstallDirectory,
+            variant,
+            (path, token) => FleetAgentUpdate.ProbeReleaseExecutableAsync(path, release.Version, token),
+            ProtectedFiles);
+        var service = new SelfUpdateService(
+            FleetAgentUpdate.InstalledExePath(),
+            FleetAgentUpdate.InstalledVersion(),
+            source,
+            options,
+            probe: session.ProbeAsync);
+        return await service.UpdateAsync(new SelfUpdateRequest(Tag: release.Tag), ct);
     }
 
     private async Task<AgentUpdateResultDto> UpdateFromUrlAsync(string url, string from, CancellationToken ct)
@@ -262,8 +313,7 @@ public sealed class AgentUpdateService
     {
         try
         {
-            foreach (var stale in Directory.EnumerateFiles(InstallDirectory, "*" + BackupSuffix, SearchOption.AllDirectories))
-                TryDelete(stale);
+            UpdateFiles.CleanUpRetiredFiles(InstallDirectory);
             var replacer = new ExecutableReplacer();
             foreach (var name in AgentIdentity.ExeFileNames)
                 replacer.RemoveRetiredCopies(Path.Combine(InstallDirectory, name));

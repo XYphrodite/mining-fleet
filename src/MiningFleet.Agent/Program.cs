@@ -5,6 +5,12 @@ using Microsoft.Extensions.Options;
 using MiningFleet.Agent;
 using MiningFleet.Contracts;
 
+if (args.Any(a => string.Equals(a, "--probe", StringComparison.Ordinal) || string.Equals(a, "--version", StringComparison.Ordinal)))
+{
+    Console.WriteLine(Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "0.0.0");
+    return;
+}
+
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
     Args = args,

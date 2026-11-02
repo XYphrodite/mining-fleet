@@ -1,4 +1,5 @@
 using System.Reflection;
+using MiningFleet.Contracts;
 using SelfUpdateKit;
 
 namespace MiningFleet.Console;
@@ -38,19 +39,37 @@ public sealed class UpdateService
         if (string.IsNullOrWhiteSpace(_config.Repository))
             throw new InvalidOperationException("update.repository is not set in fleet.json (expected \"owner/name\").");
 
-        var options = FleetConsoleUpdate.Options(_config);
-        using var source = new GitHubReleaseSource(options);
+        var preferred = FleetConsoleUpdate.PreferredVariant();
+        var chosenVariant = preferred;
         ReleaseDescriptor release;
         try
         {
+            using var source = new GitHubReleaseSource(FleetConsoleUpdate.Options(_config, preferred));
             release = await source.ResolveAsync(null, ct);
+        }
+        catch (InvalidDataException) when (preferred == FleetVariant.Light)
+        {
+            chosenVariant = FleetVariant.Full;
+            try
+            {
+                using var fallback = new GitHubReleaseSource(FleetConsoleUpdate.Options(_config, FleetVariant.Full));
+                release = await fallback.ResolveAsync(null, ct);
+            }
+            catch (InvalidDataException ex)
+            {
+                throw new InvalidOperationException(ex.Message, ex);
+            }
         }
         catch (InvalidDataException ex)
         {
             throw new InvalidOperationException(ex.Message, ex);
         }
 
-        if (release.Version <= FleetConsoleUpdate.InstalledVersion()) return null;
+        var installedVersion = FleetConsoleUpdate.InstalledVersion();
+        var variantSwitchWanted = release.Version == installedVersion
+                                  && FleetConsoleUpdate.InstalledVariant() != chosenVariant;
+        if (release.Version < installedVersion || (release.Version == installedVersion && !variantSwitchWanted))
+            return null;
 
         return new UpdateInfo(
             new Version(release.Version.Major, release.Version.Minor, release.Version.Patch),
@@ -68,20 +87,49 @@ public sealed class UpdateService
     public async Task<string> ApplyAsync(UpdateInfo update, Action<long, long?> onProgress, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(update);
-        var options = FleetConsoleUpdate.Options(_config);
+        var preferred = update.AssetName.EndsWith("-light.zip", StringComparison.OrdinalIgnoreCase)
+            ? FleetVariant.Light
+            : FleetConsoleUpdate.PreferredVariant();
+        var chosenVariant = preferred;
+
+        SelfUpdateReport report;
+        try
+        {
+            report = await ApplyVariantAsync(chosenVariant, update.Tag, onProgress, ct);
+        }
+        catch (InvalidDataException) when (chosenVariant == FleetVariant.Light)
+        {
+            chosenVariant = FleetVariant.Full;
+            report = await ApplyVariantAsync(FleetVariant.Full, update.Tag, onProgress, ct);
+        }
+
+        var variantLabel = chosenVariant == FleetVariant.Light ? "light" : "full";
+        return $"Updated to {report.Tag} ({variantLabel}). Restart mining-fleet to run the new version.";
+    }
+
+    private async Task<SelfUpdateReport> ApplyVariantAsync(
+        FleetVariant variant,
+        string tag,
+        Action<long, long?> onProgress,
+        CancellationToken ct)
+    {
+        var options = FleetConsoleUpdate.Options(_config, variant);
         using var source = new GitHubReleaseSource(options);
+        var session = new VariantSwapSession(
+            InstallDirectory,
+            variant,
+            FleetConsoleUpdate.ProbeExecutableAsync);
         var service = new SelfUpdateService(
             FleetConsoleUpdate.InstalledExePath(),
             FleetConsoleUpdate.InstalledVersion(),
             source,
             options,
-            probe: FleetConsoleUpdate.ProbeExecutableAsync);
-        var report = await service.UpdateAsync(new SelfUpdateRequest(Tag: update.Tag), ct, progress =>
+            probe: session.ProbeAsync);
+        return await service.UpdateAsync(new SelfUpdateRequest(Tag: tag), ct, progress =>
         {
             if (progress.Phase == SelfUpdatePhase.Downloading)
                 onProgress(progress.ReceivedBytes ?? 0, progress.TotalBytes);
         });
-        return $"Updated to {report.Tag}. Restart mining-fleet to run the new version.";
     }
 
     private static string AssetFileName(Uri address) =>
@@ -92,8 +140,7 @@ public sealed class UpdateService
     {
         try
         {
-            foreach (var stale in Directory.EnumerateFiles(InstallDirectory, "*" + BackupSuffix, SearchOption.AllDirectories))
-                TryDelete(stale);
+            UpdateFiles.CleanUpRetiredFiles(InstallDirectory);
             var replacer = new ExecutableReplacer();
             foreach (var name in FleetConsoleUpdate.ExeFileNames)
                 replacer.RemoveRetiredCopies(Path.Combine(InstallDirectory, name));

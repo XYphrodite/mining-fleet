@@ -15,8 +15,9 @@ public static class FleetConsoleUpdate
         [ExeName(ReleaseAssets.Product), ExeName(ReleaseAssets.LegacyProduct)];
 
     /// <summary>
-    /// Options for one variant. The default overload keeps the installed variant (see
-    /// <see cref="InstalledVariant"/>), so a full install never drifts onto light zips.
+    /// Options for one variant. The default overload prefers <see cref="FleetVariant.Light"/>
+    /// whenever this PC has the compatible .NET runtime installed, falling back to
+    /// <see cref="FleetVariant.Full"/> otherwise.
     /// </summary>
     public static ReleaseSourceOptions Options(UpdateConfig config, FleetVariant variant)
     {
@@ -37,10 +38,13 @@ public static class FleetConsoleUpdate
     }
 
     public static ReleaseSourceOptions Options(UpdateConfig config) =>
-        Options(config, InstalledVariant());
+        Options(config, PreferredVariant());
+
+    public static FleetVariant PreferredVariant() =>
+        ReleaseAssets.PreferredVariant(agent: false);
 
     /// <summary>
-    /// Which package this installation came from. The installer records it in
+    /// Which package this installation came from. The installer and updater record it in
     /// <see cref="ReleaseAssets.VariantMarkerFileName"/> next to the executable.
     /// </summary>
     public static FleetVariant InstalledVariant() =>
@@ -56,7 +60,7 @@ public static class FleetConsoleUpdate
         UpdateFiles.FirstExisting(UpdateService.InstallDirectory, ExeFileNames, ExeFileNames[0]);
 
     public static Task<bool> ProbeExecutableAsync(string path, CancellationToken cancellationToken) =>
-        Task.FromResult(UpdateFiles.IsPortableExecutable(path));
+        UpdateFiles.RunExecutableProbeAsync(path, "version", TimeSpan.FromSeconds(10), cancellationToken);
 
     private static string ExeName(string product) =>
         OperatingSystem.IsWindows() ? product + ".exe" : product;

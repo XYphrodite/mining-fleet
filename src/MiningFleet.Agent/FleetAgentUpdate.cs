@@ -13,9 +13,9 @@ namespace MiningFleet.Agent;
 public static class FleetAgentUpdate
 {
     /// <summary>
-    /// Options for one variant. The default overload keeps the installed variant (see
-    /// <see cref="InstalledVariant"/>), so a full install never drifts onto light zips.
-    /// Identity files stay excluded in every variant.
+    /// Options for one variant. The default overload prefers <see cref="FleetVariant.Light"/>
+    /// whenever this PC has the compatible .NET + ASP.NET Core runtime installed, falling back
+    /// to <see cref="FleetVariant.Full"/> otherwise. Identity files stay excluded in every variant.
     /// </summary>
     public static ReleaseSourceOptions Options(FleetVariant variant)
     {
@@ -34,10 +34,13 @@ public static class FleetAgentUpdate
     }
 
     public static ReleaseSourceOptions Options() =>
-        Options(InstalledVariant());
+        Options(PreferredVariant());
+
+    public static FleetVariant PreferredVariant() =>
+        ReleaseAssets.PreferredVariant(agent: true);
 
     /// <summary>
-    /// Which package this installation came from. The installer records it in
+    /// Which package this installation came from. The installer and updater record it in
     /// <see cref="ReleaseAssets.VariantMarkerFileName"/> next to the executable.
     /// </summary>
     public static FleetVariant InstalledVariant() =>
@@ -67,4 +70,19 @@ public static class FleetAgentUpdate
 
     public static Task<bool> ProbeExecutableAsync(string path, CancellationToken cancellationToken) =>
         Task.FromResult(UpdateFiles.IsPortableExecutable(path));
+
+    /// <summary>
+    /// Executes <c>--probe</c> on builds that support it (&gt;= 1.17.40) so a Light binary is
+    /// proven to load on this machine's shared .NET + ASP.NET Core runtime before swapping.
+    /// </summary>
+    public static Task<bool> ProbeReleaseExecutableAsync(
+        string path,
+        ReleaseVersion releaseVersion,
+        CancellationToken cancellationToken)
+    {
+        if (releaseVersion < new ReleaseVersion(1, 17, 40) && releaseVersion != new ReleaseVersion(0, 0, 0))
+            return ProbeExecutableAsync(path, cancellationToken);
+
+        return UpdateFiles.RunExecutableProbeAsync(path, "--probe", TimeSpan.FromSeconds(10), cancellationToken);
+    }
 }
