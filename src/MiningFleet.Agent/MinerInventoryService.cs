@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using MiningFleet.Contracts;
 
 namespace MiningFleet.Agent;
@@ -7,12 +8,22 @@ public sealed class MinerInventoryService
     private readonly MinerService _miner;
     private readonly GpuMinerService _gpu;
     private readonly MinerConfigStore _config;
+    private readonly ILogger<MinerInventoryService>? _log;
+    private readonly bool _manageDefenderExclusions;
 
     public MinerInventoryService(MinerService miner, GpuMinerService gpu, MinerConfigStore config)
     {
         _miner = miner;
         _gpu = gpu;
         _config = config;
+    }
+
+    [ActivatorUtilitiesConstructor]
+    public MinerInventoryService(MinerService miner, GpuMinerService gpu, MinerConfigStore config, ILogger<MinerInventoryService> log)
+        : this(miner, gpu, config)
+    {
+        _log = log;
+        _manageDefenderExclusions = true;
     }
 
     public IReadOnlyList<MinerInventoryItemDto> List()
@@ -156,6 +167,9 @@ public sealed class MinerInventoryService
                 if (cfg is not null && IsInside(cfg, full))
                     _config.ClearGpuMinerPath();
             }
+
+            if (_manageDefenderExclusions)
+                await WindowsDefenderExclusions.TryRemoveUnderPathAsync(full, _log, ct);
 
             return new UninstallResultDto(true, $"Removed {full}.");
         }
