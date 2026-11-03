@@ -120,7 +120,13 @@ public static class Updater
     /// </summary>
     public static async Task NotifyIfOutdatedAsync(FleetConfig config, CancellationToken ct)
     {
-        if (!config.Update.CheckOnStart || string.IsNullOrWhiteSpace(config.Update.Repository)) return;
+        if (await GetOutdatedBannerAsync(config, ct) is { } banner)
+            AnsiConsole.MarkupLine(banner);
+    }
+
+    public static async Task<string?> GetOutdatedBannerAsync(FleetConfig config, CancellationToken ct)
+    {
+        if (!config.Update.CheckOnStart || string.IsNullOrWhiteSpace(config.Update.Repository)) return null;
 
         try
         {
@@ -136,21 +142,19 @@ public static class Updater
                                 && current.Build == update.Version.Build;
                 if (sameBuild && update.AssetName.EndsWith("-light.zip", StringComparison.OrdinalIgnoreCase))
                 {
-                    AnsiConsole.MarkupLine(
-                        $"[yellow]mining-fleet {update.Version} light build is available for this PC[/] [grey](running full) - " +
-                        "run 'mining-fleet update'[/]");
+                    return $"[yellow]mining-fleet {update.Version} light build is available for this PC[/] [grey](running full) - " +
+                           "run 'mining-fleet update'[/]";
                 }
-                else
-                {
-                    AnsiConsole.MarkupLine(
-                        $"[yellow]mining-fleet {update.Version} is available[/] [grey](running {current}) - " +
-                        "run 'mining-fleet update'[/]");
-                }
+
+                return $"[yellow]mining-fleet {update.Version} is available[/] [grey](running {current}) - " +
+                       "run 'mining-fleet update'[/]";
             }
         }
         catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or TaskCanceledException or OperationCanceledException)
         {
         }
+
+        return null;
     }
 
     private static string Size(long bytes) => bytes switch

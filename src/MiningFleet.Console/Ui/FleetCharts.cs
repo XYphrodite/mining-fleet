@@ -175,13 +175,16 @@ public sealed class SparklineHistory(int capacity = 10)
 
     public void Record(IEnumerable<NodeState> states)
     {
-        foreach (var state in states)
+        foreach (var state in states) RecordOne(state);
+    }
+
+    public void RecordOne(NodeState state)
+    {
+        if (state.Pending) return;
+        Push(_cpu, state.Node.Name, state.Mining ? state.Hashrate : 0.0);
+        if (state.Gpu is not null || _gpu.ContainsKey(state.Node.Name))
         {
-            Push(_cpu, state.Node.Name, state.Mining ? state.Hashrate : 0.0);
-            if (state.Gpu is not null || _gpu.ContainsKey(state.Node.Name))
-            {
-                Push(_gpu, state.Node.Name, state.GpuMining ? state.GpuHashrate : 0.0);
-            }
+            Push(_gpu, state.Node.Name, state.GpuMining ? state.GpuHashrate : 0.0);
         }
     }
 

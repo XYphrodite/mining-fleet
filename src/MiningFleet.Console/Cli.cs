@@ -14,6 +14,7 @@ public static class Cli
         mining-fleet [command] [node ...]
 
           (no command)   interactive console
+          dashboard      open the live fleet dashboard directly
           status         print the fleet table once
           start          start mining
           stop           stop mining
@@ -56,6 +57,13 @@ public static class Cli
 
         switch (command)
         {
+            case "dashboard" or "live":
+                if (System.Console.IsOutputRedirected || System.Console.IsInputRedirected)
+                    return await StatusAsync(config, fleet, ct);
+                using (var liveDashboard = new Dashboard(config, fleet, market))
+                    await liveDashboard.ShowAsync(ct);
+                return 0;
+
             case "status":
                 return await StatusAsync(config, fleet, ct);
 
@@ -108,7 +116,7 @@ public static class Cli
 
     private static async Task<int> StatusAsync(FleetConfig config, FleetService fleet, CancellationToken ct)
     {
-        var states = await fleet.PollAsync(ct);
+        var states = await fleet.PollAsync(ct, TimeSpan.FromSeconds(4));
         if (states.Count == 0)
         {
             AnsiConsole.MarkupLine("[yellow]No enabled nodes configured.[/]");
@@ -395,7 +403,7 @@ public static class Cli
 
         if (wantLog) return await ThrottleLogAsync(fleet, targets, ct);
 
-        var states = await fleet.PollAsync(ct);
+        var states = await fleet.PollAsync(ct, TimeSpan.FromSeconds(4));
         var table = new Table().Border(TableBorder.Rounded)
             .AddColumn("Node")
             .AddColumn(new TableColumn("Power").RightAligned())

@@ -196,6 +196,7 @@ public sealed class MarketService : IDisposable
     private string ApiBase => _config.Pool.ApiBase.TrimEnd('/');
 
     /// <summary>Pool stats back several screens at once, so one response is reused briefly.</summary>
+    private readonly SemaphoreSlim _poolGate = new(1, 1);
     private JsonElement? _poolStatsCache;
     private DateTimeOffset _poolStatsFetchedAt = DateTimeOffset.MinValue;
     private static readonly TimeSpan PoolStatsTtl = TimeSpan.FromSeconds(30);
@@ -205,12 +206,23 @@ public sealed class MarketService : IDisposable
         if (_poolStatsCache is not null && DateTimeOffset.UtcNow - _poolStatsFetchedAt < PoolStatsTtl)
             return _poolStatsCache;
 
-        var fetched = await GetJsonAsync($"{ApiBase}/pool/stats", ct);
-        if (fetched is null) return _poolStatsCache;
+        await _poolGate.WaitAsync(ct);
+        try
+        {
+            if (_poolStatsCache is not null && DateTimeOffset.UtcNow - _poolStatsFetchedAt < PoolStatsTtl)
+                return _poolStatsCache;
 
-        _poolStatsCache = fetched;
-        _poolStatsFetchedAt = DateTimeOffset.UtcNow;
-        return fetched;
+            var fetched = await GetJsonAsync($"{ApiBase}/pool/stats", ct);
+            if (fetched is null) return _poolStatsCache;
+
+            _poolStatsCache = fetched;
+            _poolStatsFetchedAt = DateTimeOffset.UtcNow;
+            return fetched;
+        }
+        finally
+        {
+            _poolGate.Release();
+        }
     }
 
     private async Task<double> GetSigDivisorAsync(CancellationToken ct)
@@ -281,5 +293,9 @@ public sealed class MarketService : IDisposable
         return price;
     }
 
-    public void Dispose() => _http.Dispose();
+    public void Dispose()
+    {
+        _http.Dispose();
+        _poolGate.Dispose();
+    }
 }

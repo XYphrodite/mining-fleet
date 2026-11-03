@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.Json;
 
@@ -103,9 +104,9 @@ public sealed class GpuPoolService : IDisposable
 
     private readonly HttpClient _http;
     private readonly TimeProvider _clock;
-    private readonly Dictionary<string, (DateTimeOffset At, GpuPoolStats? Stats)> _cache = new();
-    private readonly Dictionary<string, (DateTimeOffset At, GpuPoolRate? Rate)> _rates = new();
-    private readonly Dictionary<string, (DateTimeOffset At, double? Price)> _prices = new();
+    private readonly ConcurrentDictionary<string, (DateTimeOffset At, GpuPoolStats? Stats)> _cache = new();
+    private readonly ConcurrentDictionary<string, (DateTimeOffset At, GpuPoolRate? Rate)> _rates = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, (DateTimeOffset At, double? Price)> _prices = new(StringComparer.OrdinalIgnoreCase);
 
     public GpuPoolService(HttpMessageHandler? handler = null, TimeProvider? clock = null)
     {
@@ -185,18 +186,21 @@ public sealed class GpuPoolService : IDisposable
         // wrong: every arrangement with the coin after it answers 404 rather than saying so.
         var root = $"https://pool.kryptex.com/{target.Coin}/api/v1/miner";
 
-        var balance = await ReadJsonAsync($"{root}/balance/{target.Address}", ct);
-        if (balance is null) return null;
+        var balanceTask = ReadJsonAsync($"{root}/balance/{target.Address}", ct);
+        var payoutsTask = ReadJsonAsync($"{root}/payouts/{target.Address}", ct);
+        var paidTask = PaidAsync(root, target, ct);
+        await Task.WhenAll(balanceTask, payoutsTask, paidTask);
 
-        var payouts = await ReadJsonAsync($"{root}/payouts/{target.Address}", ct);
+        var balance = balanceTask.Result;
+        if (balance is null) return null;
 
         return new GpuPoolStats(
             target,
             Number(balance.Value, "confirmed"),
             Number(balance.Value, "unconfirmed"),
-            await PaidAsync(root, target, ct),
+            paidTask.Result,
             Number(balance.Value, "threshold"),
-            ParsePayouts(payouts),
+            ParsePayouts(payoutsTask.Result),
             _clock.GetUtcNow());
     }
 
@@ -327,8 +331,7 @@ public sealed class GpuPoolService : IDisposable
         var active = states.Where(s => s.GpuMining).ToList();
         if (active.Count == 0) return new Dictionary<string, NodeGpuQuote>();
 
-        var nodeCoins = new List<(NodeState State, string Coin)>();
-        foreach (var state in active)
+        var resolved = await Task.WhenAll(active.Select(async state =>
         {
             var coin = CoinForPool(state.Gpu?.Pool);
             if (coin is null && knownTargets is not null && knownTargets.TryGetValue(state.Node.Endpoint, out var known))
@@ -337,7 +340,7 @@ public sealed class GpuPoolService : IDisposable
 
             if (coin is null && fleet is not null && state.Online)
             {
-                using var client = fleet.CreateClient(state.Node);
+                using var client = fleet.CreateClient(state.Node, TimeSpan.FromSeconds(4));
                 try
                 {
                     var remote = await client.GetConfigAsync(ct);
@@ -349,8 +352,13 @@ public sealed class GpuPoolService : IDisposable
                 }
             }
 
-            if (coin is not null) nodeCoins.Add((state, coin));
-        }
+            return (State: state, Coin: coin);
+        }));
+
+        var nodeCoins = resolved
+            .Where(r => r.Coin is not null)
+            .Select(r => (r.State, Coin: r.Coin!))
+            .ToList();
 
         var byCoin = await ResolveCoinQuotesAsync(nodeCoins.Select(n => n.Coin), config.Electricity.Currency, ct);
 
@@ -373,20 +381,28 @@ public sealed class GpuPoolService : IDisposable
         string currency,
         CancellationToken ct)
     {
-        var byCoin = new Dictionary<string, NodeGpuQuote>(StringComparer.OrdinalIgnoreCase);
-        foreach (var raw in coinSlugs)
-        {
-            if (string.IsNullOrWhiteSpace(raw)) continue;
-            var coin = raw.Trim().ToLowerInvariant();
-            if (byCoin.ContainsKey(coin)) continue;
+        var distinct = coinSlugs
+            .Where(raw => !string.IsNullOrWhiteSpace(raw))
+            .Select(raw => raw.Trim().ToLowerInvariant())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
 
+        if (distinct.Length == 0)
+            return new Dictionary<string, NodeGpuQuote>(StringComparer.OrdinalIgnoreCase);
+
+        var fetched = await Task.WhenAll(distinct.Select(async coin =>
+        {
             var rateTask = GetPoolRateAsync(coin, ct);
             var priceTask = GetCoinPriceAsync(coin, currency, ct);
             await Task.WhenAll(rateTask, priceTask);
             var rate = rateTask.Result;
             var ticker = rate?.Ticker ?? coin.Split('-')[0].ToUpperInvariant();
-            byCoin[coin] = new NodeGpuQuote(ticker, rate?.CoinsPerHashrateDay, priceTask.Result);
-        }
+            return (Coin: coin, Quote: new NodeGpuQuote(ticker, rate?.CoinsPerHashrateDay, priceTask.Result));
+        }));
+
+        var byCoin = new Dictionary<string, NodeGpuQuote>(distinct.Length, StringComparer.OrdinalIgnoreCase);
+        foreach (var (coin, quote) in fetched)
+            byCoin[coin] = quote;
 
         return byCoin;
     }

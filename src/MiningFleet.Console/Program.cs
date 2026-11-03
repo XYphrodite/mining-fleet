@@ -55,7 +55,7 @@ var settings = new SettingsScreen(config);
 
 var consoleVersion = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "0.0.0";
 
-await Updater.NotifyIfOutdatedAsync(config, cts.Token);
+var updateBannerTask = Updater.GetOutdatedBannerAsync(config, cts.Token);
 
 try
 {
@@ -64,6 +64,8 @@ try
         AnsiConsole.Clear();
         AnsiConsole.Write(new FigletText("mining fleet").Color(Color.Aqua));
         AnsiConsole.MarkupLine($"[dim]v{Markup.Escape(consoleVersion)}[/]");
+        if (updateBannerTask.IsCompletedSuccessfully && updateBannerTask.Result is { Length: > 0 } updateBanner)
+            AnsiConsole.MarkupLine(updateBanner);
         AnsiConsole.MarkupLine(
             $"[grey]{config.Nodes.Count(n => n.Enabled)} enabled node(s)  |  pool {Markup.Escape(config.Pool.Url)}  |  {Markup.Escape(config.Path)}[/]");
         if (string.IsNullOrWhiteSpace(config.Token))

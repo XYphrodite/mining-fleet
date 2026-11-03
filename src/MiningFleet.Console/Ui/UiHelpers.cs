@@ -64,6 +64,7 @@ public static class UiHelpers
 
     private static string MinerStatusBadge(NodeState state) => state switch
     {
+        { Pending: true } => "[grey]polling...[/]",
         { Online: false } => $"[red]offline[/] [grey]{Escape(state.Error)}[/]",
         // A miner this agent did not start keeps its own API token, so hashrate is unreadable
         // until it is restarted through the fleet. Say so instead of showing a blank rate.

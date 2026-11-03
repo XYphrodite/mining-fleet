@@ -3,7 +3,12 @@ using MiningFleet.Contracts;
 namespace MiningFleet.Console;
 
 /// <summary>What the console knows about one node right now.</summary>
-public sealed record NodeState(NodeConfig Node, NodeSnapshotDto? Snapshot, string? Error, DateTimeOffset PolledAt)
+public sealed record NodeState(
+    NodeConfig Node,
+    NodeSnapshotDto? Snapshot,
+    string? Error,
+    DateTimeOffset PolledAt,
+    bool Pending = false)
 {
     public bool Online => Snapshot is not null;
     public bool Mining => Snapshot?.Miner.Running == true;
@@ -18,8 +23,9 @@ public sealed record NodeState(NodeConfig Node, NodeSnapshotDto? Snapshot, strin
     /// A real sensor reading wins. Otherwise the operator-configured figure beats the
     /// agent's guess, because it usually comes from an actual wall meter.
     /// </summary>
-    public double PowerWatts =>
-        Snapshot?.Hardware is { PowerIsMeasured: true, EstimatedPowerWatts: { } measured }
+    public double PowerWatts => Pending
+        ? 0
+        : Snapshot?.Hardware is { PowerIsMeasured: true, EstimatedPowerWatts: { } measured }
             ? measured
             : Node.PowerFallbackWatts ?? Snapshot?.Hardware.EstimatedPowerWatts ?? 0;
 
@@ -53,18 +59,18 @@ public sealed class FleetService
     public AgentClient CreateClient(NodeConfig node, TimeSpan? timeout = null) =>
         new(node, _config.TokenFor(node), timeout);
 
-    public async Task<IReadOnlyList<NodeState>> PollAsync(CancellationToken ct)
+    public async Task<IReadOnlyList<NodeState>> PollAsync(CancellationToken ct, TimeSpan? timeout = null)
     {
         var nodes = EnabledNodes;
         if (nodes.Count == 0) return [];
 
-        var tasks = nodes.Select(node => PollOneAsync(node, ct));
+        var tasks = nodes.Select(node => PollNodeAsync(node, ct, timeout));
         return await Task.WhenAll(tasks);
     }
 
-    private async Task<NodeState> PollOneAsync(NodeConfig node, CancellationToken ct)
+    public async Task<NodeState> PollNodeAsync(NodeConfig node, CancellationToken ct, TimeSpan? timeout = null)
     {
-        using var client = CreateClient(node);
+        using var client = CreateClient(node, timeout);
         try
         {
             var snapshot = await client.GetStatusAsync(ct);

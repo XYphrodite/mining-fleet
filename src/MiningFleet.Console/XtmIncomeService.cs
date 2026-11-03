@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.Json;
 
@@ -52,8 +53,8 @@ public sealed class XtmIncomeService : IDisposable
 {
     private readonly HttpClient _http;
     private readonly TimeProvider _clock;
-    private readonly Dictionary<XtmAccount, (DateTimeOffset Attempt, XtmIncome? Income)> _cache = new();
-    private readonly Dictionary<XtmAccount, DateTimeOffset> _history = new();
+    private readonly ConcurrentDictionary<XtmAccount, (DateTimeOffset Attempt, XtmIncome? Income)> _cache = new();
+    private readonly ConcurrentDictionary<XtmAccount, DateTimeOffset> _history = new();
 
     public XtmIncomeService(HttpMessageHandler? handler = null, TimeProvider? clock = null)
     {
