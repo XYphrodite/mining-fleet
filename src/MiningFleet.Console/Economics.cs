@@ -257,15 +257,18 @@ public static class Economics
     };
 
     /// <summary>
-    /// The fleet's GPU rate, summed per unit and never across units: 59 TH/s of pearlhash and 4.5 g/s
-    /// of Cuckaroo29 are different quantities, and one number for both would mean nothing.
+    /// The fleet's GPU rate, summed per algorithm and unit and never across either: 59 TH/s of
+    /// pearlhash, 81 MH/s of quantus, and 4.5 g/s of Cuckaroo29 are different quantities, and one
+    /// number combining them would mean nothing.
     /// </summary>
     public static string FormatGpuFleetRate(IEnumerable<NodeState> nodes)
     {
         var parts = nodes
             .Where(n => n.GpuMining && n.GpuHashrate > 0)
-            .GroupBy(n => n.Gpu?.HashrateUnit ?? "")
-            .Select(g => FormatGpuRate(g.Sum(n => n.GpuHashrate), g.Key))
+            .GroupBy(n => (
+                Algorithm: (n.Gpu?.Algorithm ?? "").Trim().ToLowerInvariant(),
+                Unit: n.Gpu?.HashrateUnit ?? ""))
+            .Select(g => FormatGpuRate(g.Sum(n => n.GpuHashrate), g.Key.Unit))
             .ToList();
         return parts.Count == 0 ? "-" : string.Join(" + ", parts);
     }

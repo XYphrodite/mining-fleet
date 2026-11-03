@@ -88,7 +88,7 @@ public sealed class MinerScreen
         var choice = AnsiConsole.Prompt(UiHelpers.Menu("Action", "< back",
                 "Install / update xmrig (CPU)",
                 "Install / update lolMiner (GPU, Tari CR29)",
-                "Install / update SRBMiner (GPU, Pearl)",
+                "Install / update SRBMiner (GPU, Pearl / Quantus)",
                 "Remove miner",
                 "< back"));
 
@@ -96,7 +96,7 @@ public sealed class MinerScreen
         {
             case "Install / update xmrig (CPU)": await InstallAsync(ct); break;
             case "Install / update lolMiner (GPU, Tari CR29)": await InstallGpuAsync(GpuMinerSoftware.LolMiner, ct); break;
-            case "Install / update SRBMiner (GPU, Pearl)": await InstallGpuAsync(GpuMinerSoftware.SrMiner, ct); break;
+            case "Install / update SRBMiner (GPU, Pearl / Quantus)": await InstallGpuAsync(GpuMinerSoftware.SrMiner, ct); break;
             case "Remove miner": await RemoveMinerAsync(ct); break;
             default: break;
         }
@@ -237,7 +237,7 @@ public sealed class MinerScreen
     private async Task InstallGpuAsync(GpuMinerSoftware software, CancellationToken ct)
     {
         UiHelpers.Header(software == GpuMinerSoftware.SrMiner
-            ? "Install / update SRBMiner (GPU, Pearl)"
+            ? "Install / update SRBMiner (GPU, Pearl / Quantus)"
             : "Install / update lolMiner (GPU, Tari CR29)");
 
         var nodes = UiHelpers.SelectNodes(_config, "Install on which nodes?");
@@ -313,7 +313,7 @@ public sealed class MinerScreen
         var nodes = UiHelpers.SelectNodes(_config, "Remove from which nodes?");
         if (nodes.Count == 0) return;
 
-        var which = AnsiConsole.Prompt(UiHelpers.Menu("Which miner", "< back", "xmrig (CPU)", "lolMiner (GPU)", "SRBMiner (GPU, Pearl)", "< back"));
+        var which = AnsiConsole.Prompt(UiHelpers.Menu("Which miner", "< back", "xmrig (CPU)", "lolMiner (GPU)", "SRBMiner (GPU, Pearl / Quantus)", "< back"));
         if (which == "< back") return;
         var kind = which.Contains("xmrig") ? MinerKind.Xmrig : which.Contains("SRBMiner") ? MinerKind.SrMiner : MinerKind.LolMiner;
 
@@ -729,12 +729,12 @@ public sealed class MinerScreen
         AnsiConsole.MarkupLine($"[grey]Current: {(cur.Enabled == true ? cur.Algorithm : "off")} on {UiHelpers.Escape(cur.PoolUrl ?? "-")} as {UiHelpers.Escape(cur.User ?? "-")}[/]");
         if (cur.Enabled != true) AnsiConsole.MarkupLine("[yellow]Fleet is off — blank leaves pool/user empty and nodes will still show 'no algorithm on no pool'. Type values now.[/]");
         var enabled = AnsiConsole.Confirm("Enable GPU mining by default?", cur.Enabled == true);
-        var algo = AnsiConsole.Prompt(UiHelpers.Text("Algorithm (CR29, pearlhash, NEXA, blank = keep):").AllowEmpty().DefaultValue(cur.Algorithm ?? ""));
+        var algo = AnsiConsole.Prompt(UiHelpers.Text("Algorithm (CR29, pearlhash, quantus, NEXA, blank = keep):").AllowEmpty().DefaultValue(cur.Algorithm ?? ""));
         var pool = AnsiConsole.Prompt(UiHelpers.Text("Pool host:port (blank = keep):").AllowEmpty().DefaultValue(cur.PoolUrl ?? ""));
         var user = AnsiConsole.Prompt(UiHelpers.Text("Pool user (address/worker, blank = keep):").AllowEmpty().DefaultValue(cur.User ?? ""));
         if (enabled && string.IsNullOrWhiteSpace(algo) && string.IsNullOrWhiteSpace(cur.Algorithm))
         {
-            UiHelpers.Result(false, "Enabled but no algorithm — type CR29, pearlhash, or NEXA. Not saved.");
+            UiHelpers.Result(false, "Enabled but no algorithm — type CR29, pearlhash, quantus, or NEXA. Not saved.");
             UiHelpers.Pause(); return;
         }
         if (enabled && string.IsNullOrWhiteSpace(pool) && string.IsNullOrWhiteSpace(cur.PoolUrl ?? ""))
@@ -778,7 +778,7 @@ public sealed class MinerScreen
         var fleetAlgo = _config.GpuMiner.Algorithm ?? hint.Algorithm ?? "";
         var fleetPool = _config.GpuMiner.PoolUrl ?? hint.PoolUrl ?? "";
         var fleetUser = _config.GpuMiner.User ?? hint.User ?? "";
-        var algo = AnsiConsole.Prompt(UiHelpers.Text($"Algorithm (CR29/pearlhash/NEXA, blank = inherit '{UiHelpers.Escape(fleetAlgo != "" ? fleetAlgo : "—")}'):").AllowEmpty().DefaultValue(""));
+        var algo = AnsiConsole.Prompt(UiHelpers.Text($"Algorithm (CR29/pearlhash/quantus/NEXA, blank = inherit '{UiHelpers.Escape(fleetAlgo != "" ? fleetAlgo : "—")}'):").AllowEmpty().DefaultValue(""));
         var pool = AnsiConsole.Prompt(UiHelpers.Text($"Pool host:port (blank = inherit '{UiHelpers.Escape(fleetPool != "" ? fleetPool : "—")}'):").AllowEmpty().DefaultValue(""));
         var user = AnsiConsole.Prompt(UiHelpers.Text($"Pool user (blank = inherit '{UiHelpers.Escape(fleetUser != "" ? fleetUser : "—")}'):").AllowEmpty().DefaultValue(""));
         // Snapshot to allow revert when validation fails
@@ -830,6 +830,7 @@ public sealed class MinerScreen
 
         var choice = AnsiConsole.Prompt(UiHelpers.Menu("Target GPU coin / algorithm", "< back",
             "Pearl (PRL) — pearlhash (SRBMiner)",
+            "Quantus (QTC) — quantus (SRBMiner)",
             "Tari (XTM) — CR29 (lolMiner)",
             "Nexa (NEXA) — NEXA (lolMiner)",
             "< back"));
@@ -838,6 +839,7 @@ public sealed class MinerScreen
         var (algorithm, software) = choice switch
         {
             var c when c.Contains("pearlhash") => ("pearlhash", GpuMinerSoftware.SrMiner),
+            var c when c.Contains("quantus") => ("quantus", GpuMinerSoftware.SrMiner),
             var c when c.Contains("NEXA") => ("NEXA", GpuMinerSoftware.LolMiner),
             _ => ("CR29", GpuMinerSoftware.LolMiner),
         };
@@ -944,7 +946,7 @@ public sealed class MinerScreen
     public static GpuMinerSoftware? InferGpuSoftware(string? algorithm) =>
         algorithm?.Trim().ToLowerInvariant() switch
         {
-            "pearlhash" => GpuMinerSoftware.SrMiner,
+            "pearlhash" or "quantus" => GpuMinerSoftware.SrMiner,
             "cr29" or "c29" or "nexa" => GpuMinerSoftware.LolMiner,
             _ => null,
         };

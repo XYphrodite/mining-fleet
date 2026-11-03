@@ -345,14 +345,14 @@ public sealed record GpuMinerSettingsDto
 
     /// <summary>
     /// Which GPU miner binary to run. Null reads as <see cref="GpuMinerSoftware.LolMiner"/> so an
-    /// old miner.json keeps mining CR29. SRBMiner is the Pearl (pearlhash) path; lolMiner stays
-    /// the Tari CR29 path.
+    /// old miner.json keeps mining CR29. SRBMiner is the Pearl (<c>pearlhash</c>) and Quantus
+    /// (<c>quantus</c>) path; lolMiner stays the Tari CR29 path.
     /// </summary>
     public GpuMinerSoftware? Miner { get; init; }
 
     /// <summary>
     /// Algorithm name as the selected miner spells it, e.g. <c>CR29</c> for lolMiner or
-    /// <c>pearlhash</c> for SRBMiner. Case is passed through.
+    /// <c>pearlhash</c> / <c>quantus</c> for SRBMiner. Case is passed through.
     /// </summary>
     public string? Algorithm { get; init; }
 

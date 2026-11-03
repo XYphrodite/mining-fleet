@@ -487,7 +487,11 @@ public sealed class EconomicsScreen
         {
             if (coin.Amount > 0)
             {
-                var fmt = coin.Amount >= 100 ? $"{coin.Amount:N1}" : $"{coin.Amount:0.0000}";
+                var fmt = coin.Amount >= 100
+                    ? $"{coin.Amount:N1}"
+                    : coin.Amount >= 1
+                        ? $"{coin.Amount:0.0000}"
+                        : $"{coin.Amount:0.000000}";
                 parts.Add($"{fmt} {UiHelpers.Escape(coin.Ticker)}");
             }
         }
@@ -637,11 +641,11 @@ public sealed class EconomicsScreen
             table.AddRow(
                 new Markup(UiHelpers.Escape(names)),
                 new Markup(UiHelpers.Escape(stats.Target.Coin.ToUpperInvariant())),
-                new Markup(perDay is { } d ? $"[aqua]{(accruedPerDay is null ? d.ToString("N0") : GpuIncomePanel.Amount(d, "").Trim())}[/]" : "[grey]-[/]"),
+                new Markup(perDay is { } d ? $"[aqua]{GpuIncomePanel.Amount(d, "").Trim()}[/]" : "[grey]-[/]"),
                 new Markup(value is null ? $"[grey]price unavailable in {UiHelpers.Escape(currency)}[/]" : money.Markup(value)),
-                new Markup(stats.Paid is { } paid ? $"{paid:N2}" : "[grey]-[/]"),
+                new Markup(stats.Paid is { } paid ? GpuIncomePanel.Amount(paid, "").Trim() : "[grey]-[/]"),
                 new Markup(stats.Pending is { } pending
-                    ? $"{pending:N2}" + (stats.Threshold is { } t ? $" [grey]/ {t:N0}[/]" : "")
+                    ? $"{GpuIncomePanel.Amount(pending, "").Trim()}" + (stats.Threshold is { } t ? $" [grey]/ {t:0.##}[/]" : "")
                     : "[grey]-[/]"),
                 // Naming the window is the point: two payouts four hours apart do not describe a
                 // day, and a rate presented without its window invites being read as one. The age

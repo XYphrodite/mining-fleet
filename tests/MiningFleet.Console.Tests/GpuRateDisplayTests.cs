@@ -14,11 +14,11 @@ public sealed class GpuRateDisplayTests
     private static readonly DateTimeOffset Now = new(2026, 10, 22, 12, 0, 0, TimeSpan.Zero);
     private static readonly GpuPoolTarget Prl = new("kryptex", "prl", "prl1address");
 
-    private static NodeState Mining(string name, double rate, string unit) =>
+    private static NodeState Mining(string name, double rate, string unit, string? algorithm = null) =>
         new(new NodeConfig { Name = name, Host = "h" },
             new NodeSnapshotDto(new AgentInfoDto("rig", "Windows", "1", "1", 1, true), new MinerStatusDto(), new HardwareDto())
             {
-                GpuMiner = new GpuMinerStatusDto { Running = true, Hashrate = rate, HashrateUnit = unit },
+                GpuMiner = new GpuMinerStatusDto { Running = true, Algorithm = algorithm, Hashrate = rate, HashrateUnit = unit },
             },
             null, Now);
 
@@ -26,6 +26,7 @@ public sealed class GpuRateDisplayTests
     [InlineData(59454100883390.32, "H/s", "TH/s")]
     [InlineData(2.5e15, "H/s", "PH/s")]
     [InlineData(4.2e9, "H/s", "GH/s")]
+    [InlineData(81_500_000.0, "H/s", "MH/s")]
     [InlineData(950.0, "H/s", "H/s")]
     public void Raw_hashes_are_scaled_to_the_unit_a_person_reads(double rate, string unit, string expected)
     {
@@ -58,6 +59,20 @@ public sealed class GpuRateDisplayTests
         Assert.Contains("g/s", total);
         Assert.Contains(" + ", total);
         Assert.StartsWith("50", total);
+    }
+
+    [Fact]
+    public void Different_srbminer_algorithms_never_sum_hashes_across_coins()
+    {
+        var total = Economics.FormatGpuFleetRate([
+            Mining("a", 3e13, "H/s", "pearlhash"),
+            Mining("b", 2e13, "H/s", "pearlhash"),
+            Mining("xeon", 81.5e6, "H/s", "quantus"),
+        ]);
+
+        Assert.Contains("TH/s", total);
+        Assert.Contains("MH/s", total);
+        Assert.Contains(" + ", total);
     }
 
     [Fact]

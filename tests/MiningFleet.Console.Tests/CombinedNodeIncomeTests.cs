@@ -141,6 +141,8 @@ public sealed class CombinedNodeIncomeTests
     [Theory]
     [InlineData("prl.kryptex.network:7048", "prl")]
     [InlineData("prl-ru.kryptex.network:7048", "prl")]
+    [InlineData("qtc.kryptex.network:7049", "qtc")]
+    [InlineData("qtc-ru.kryptex.network:7049", "qtc")]
     [InlineData("stratum+tcp://xtm-c29-eu.kryptex.network:7040", "xtm-c29")]
     [InlineData("xtm-c29.kryptex.network:7040", "xtm-c29")]
     [InlineData("rx.unmineable.com:3333", null)]
@@ -148,6 +150,30 @@ public sealed class CombinedNodeIncomeTests
     public void Kryptex_coin_slug_normalizes_regional_endpoints_and_rejects_lookalikes(string pool, string? expected)
     {
         Assert.Equal(expected, GpuPoolService.CoinForPool(pool));
+    }
+
+    [Fact]
+    public async Task Quantus_pool_rate_and_kryptex_spot_price_fallback_resolve_cleanly()
+    {
+        using var qtcJson = JsonDocument.Parse(
+            """{"ticker":"qtc","fee_type":"PROP","fee":0.03,"estimated_profit_day":null,"net_hashrate":37612150453683,"block_time":12,"block_reward":0.3}""");
+        var qtc = GpuPoolService.ParsePoolRate("qtc", qtcJson.RootElement)!;
+        Assert.Equal("QTC", qtc.Ticker);
+        var expectedPerHashDay = 86400.0 / 12.0 * 0.3 / 37612150453683.0 * 0.97;
+        Assert.Equal(expectedPerHashDay * 1e12, qtc.CoinsPerHashrateDay * 1e12, precision: 8);
+
+        using var service = new GpuPoolService(new StubHandler(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("api.coingecko.com"))
+                return new HttpResponseMessage(HttpStatusCode.TooManyRequests);
+            if (url.Contains("pool.kryptex.com/api/v1/rates"))
+                return Json("""{"crypto":{"QTC":70.0},"fiat":{"RUB":80.0,"USD":1.0}}""");
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        }));
+
+        var rubPrice = await service.GetCoinPriceAsync("qtc", "RUB", CancellationToken.None);
+        Assert.Equal(5600.0, rubPrice);
     }
 
     [Fact]

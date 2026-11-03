@@ -63,7 +63,12 @@ public sealed class GpuInstallerService
             }
 
             _log.LogInformation("Downloading {Software} from {Url}", DisplayName(software), url);
-            var archive = Path.Combine(Path.GetTempPath(), $"{DisplayName(software)}-{Guid.NewGuid():N}{GuessExtension(url)}");
+            Directory.CreateDirectory(request.TargetPath);
+            await WindowsDefenderExclusions.TryAddPathAsync(request.TargetPath, _log, ct);
+
+            // Stage the archive inside TargetPath (already excluded from Windows Defender) rather
+            // than SystemTemp, where real-time protection quarantines miner zips before extraction.
+            var archive = Path.Combine(request.TargetPath, $".download-{DisplayName(software)}-{Guid.NewGuid():N}{GuessExtension(url)}");
             try
             {
                 await using (var source = await http.GetStreamAsync(url, ct))
@@ -72,8 +77,6 @@ public sealed class GpuInstallerService
                     await source.CopyToAsync(file, ct);
                 }
 
-                Directory.CreateDirectory(request.TargetPath);
-                await WindowsDefenderExclusions.TryAddPathAsync(request.TargetPath, _log, ct);
                 Extract(archive, request.TargetPath);
             }
             finally

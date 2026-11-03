@@ -273,10 +273,13 @@ public sealed class FleetConfig
         return resolved.NamesACondition ? resolved : null;
     }
 
+    public static bool IsSrMinerAlgorithm(string? algorithm) =>
+        algorithm?.Trim().ToLowerInvariant() is "pearlhash" or "quantus";
+
     public GpuCoinProfile ResolveGpuProfile(string algorithm, IEnumerable<GpuMinerSettingsDto?>? liveNodeConfigs = null)
     {
         var key = algorithm.Trim();
-        var software = key.Equals("pearlhash", StringComparison.OrdinalIgnoreCase)
+        var software = IsSrMinerAlgorithm(key)
             ? GpuMinerSoftware.SrMiner
             : GpuMinerSoftware.LolMiner;
 
@@ -309,6 +312,7 @@ public sealed class FleetConfig
         pool ??= key.ToLowerInvariant() switch
         {
             "pearlhash" => "prl.kryptex.network:7048",
+            "quantus" => "qtc.kryptex.network:7049",
             "cr29" or "c29" => "taric29.luckypool.io:3111",
             "nexa" => "nexa.kryptex.network:7777",
             _ => "",
@@ -332,7 +336,7 @@ public sealed class FleetConfig
 
         var existing = GpuProfiles.TryGetValue(key, out var prev) ? prev : new GpuCoinProfile { Algorithm = key };
         existing.Algorithm = key;
-        existing.Miner = key.Equals("pearlhash", StringComparison.OrdinalIgnoreCase)
+        existing.Miner = IsSrMinerAlgorithm(key)
             ? GpuMinerSoftware.SrMiner
             : GpuMinerSoftware.LolMiner;
         if (!string.IsNullOrWhiteSpace(poolUrl)) existing.PoolUrl = poolUrl.Trim();
@@ -343,7 +347,9 @@ public sealed class FleetConfig
     public static string? WalletBase(string? user)
     {
         if (string.IsNullOrWhiteSpace(user)) return null;
-        var basePart = user.Split('/', '.')[0].Trim();
+        var beforeSlash = user.Split('/')[0].Trim();
+        // Kryptex email logins (user@domain.com/worker) contain dots in the domain; only strip .worker on non-emails.
+        var basePart = beforeSlash.Contains('@') ? beforeSlash : beforeSlash.Split('.')[0].Trim();
         return basePart.Length == 0 ? null : basePart;
     }
 

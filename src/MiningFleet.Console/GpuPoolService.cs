@@ -158,8 +158,9 @@ public sealed class GpuPoolService : IDisposable
         if (string.IsNullOrWhiteSpace(gpu.PoolUrl) || string.IsNullOrWhiteSpace(gpu.User)) return null;
         if (CoinForPool(gpu.PoolUrl) is not { } coin) return null;
 
-        // Kryptex takes address/worker. A login with no slash is the whole address.
+        // Kryptex accepts both address/worker and address.worker; email logins keep domain dots.
         var address = gpu.User.Split('/')[0].Trim();
+        if (!address.Contains('@')) address = address.Split('.')[0].Trim();
         return address.Length == 0 ? null : new GpuPoolTarget(Kryptex, coin, address);
     }
 
@@ -252,11 +253,13 @@ public sealed class GpuPoolService : IDisposable
     /// is silent: asking CoinGecko for <c>tari</c> returns <c>{}</c> with a 200, not an error, so a
     /// wrong id here reads as "this coin has no price" forever.
     /// </summary>
-    private static string? PriceId(string coin) => coin.Split('-')[0] switch
+    private static string? PriceId(string coin) => coin.Split('-')[0].ToLowerInvariant() switch
     {
         "xtm" => "minotari",
         // CoinGecko's id for Pearl (PRL), which is not "pearl": that slug is a different token.
         "prl" => "pearl-2",
+        "qtc" => "quantus",
+        "nexa" => "nexa",
         _ => null,
     };
 
@@ -418,18 +421,27 @@ public sealed class GpuPoolService : IDisposable
 
     public async Task<double?> GetCoinPriceAsync(string coinSlug, string currency, CancellationToken ct)
     {
-        if (PriceId(coinSlug) is not { } id) return null;
+        if (string.IsNullOrWhiteSpace(coinSlug) || string.IsNullOrWhiteSpace(currency)) return null;
 
+        var ticker = coinSlug.Trim().Split('-')[0].ToUpperInvariant();
+        var id = PriceId(coinSlug.Trim());
         var now = _clock.GetUtcNow();
-        var vs = currency.ToLowerInvariant();
-        var key = $"price/{id}/{vs}";
+        var vs = currency.Trim().ToLowerInvariant();
+        var key = $"price/{id ?? ticker}/{vs}";
         if (_prices.TryGetValue(key, out var cached)
             && now - cached.At < (cached.Price is not null ? PriceTtl : Ttl))
             return cached.Price;
 
-        var url = $"https://api.coingecko.com/api/v3/simple/price?ids={id}&vs_currencies={vs}";
-        var json = await ReadJsonAsync(url, ct);
-        var price = json is { } root && root.TryGetProperty(id, out var coin) ? Number(coin, vs) : null;
+        double? price = null;
+        if (id is not null)
+        {
+            var url = $"https://api.coingecko.com/api/v3/simple/price?ids={id}&vs_currencies={vs}";
+            var json = await ReadJsonAsync(url, ct);
+            price = json is { } root && root.TryGetProperty(id, out var coin) ? Number(coin, vs) : null;
+        }
+
+        // Fall back to Kryptex's own spot rates feed when CoinGecko rate-limits (429) or lacks the slug.
+        price ??= await GetKryptexSpotPriceAsync(ticker, currency.Trim().ToUpperInvariant(), ct);
 
         // A free price feed rate-limits, and a 429 is not evidence that the currency is missing.
         // Keeping the last good number beats blanking the column every few refreshes.
@@ -438,6 +450,46 @@ public sealed class GpuPoolService : IDisposable
         _prices[key] = (now, price);
         return price;
     }
+
+    private async Task<double?> GetKryptexSpotPriceAsync(string tickerUpper, string fiatUpper, CancellationToken ct)
+    {
+        var json = await ReadJsonAsync("https://pool.kryptex.com/api/v1/rates", ct);
+        if (json is not { } root || root.ValueKind != JsonValueKind.Object) return null;
+        if (!root.TryGetProperty("crypto", out var crypto) || crypto.ValueKind != JsonValueKind.Object) return null;
+
+        var usdPrice = NumberCaseInsensitive(crypto, tickerUpper);
+        if (usdPrice is not > 0 || !double.IsFinite(usdPrice.Value)) return null;
+
+        if (fiatUpper == "USD") return usdPrice.Value;
+        if (!root.TryGetProperty("fiat", out var fiat) || fiat.ValueKind != JsonValueKind.Object) return null;
+
+        var fiatPerUsd = NumberCaseInsensitive(fiat, fiatUpper);
+        if (fiatPerUsd is not > 0 || !double.IsFinite(fiatPerUsd.Value)) return null;
+
+        return usdPrice.Value * fiatPerUsd.Value;
+    }
+
+    private static double? NumberCaseInsensitive(JsonElement obj, string propertyName)
+    {
+        if (obj.TryGetProperty(propertyName, out var exact))
+            return ElementToDouble(exact);
+
+        foreach (var prop in obj.EnumerateObject())
+        {
+            if (string.Equals(prop.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+                return ElementToDouble(prop.Value);
+        }
+
+        return null;
+    }
+
+    private static double? ElementToDouble(JsonElement value) => value.ValueKind switch
+    {
+        JsonValueKind.Number => value.GetDouble(),
+        JsonValueKind.String when double.TryParse(
+            value.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) => parsed,
+        _ => null,
+    };
 
     private async Task<JsonElement?> ReadJsonAsync(string url, CancellationToken ct)
     {

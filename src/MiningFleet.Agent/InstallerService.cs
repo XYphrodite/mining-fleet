@@ -74,7 +74,11 @@ public sealed class InstallerService
             var exeName = OperatingSystem.IsWindows() ? "xmrig.exe" : "xmrig";
 
             _log.LogInformation("Downloading xmrig from {Url}", url);
-            var archive = Path.Combine(Path.GetTempPath(), $"xmrig-{Guid.NewGuid():N}{GuessExtension(url)}");
+            Directory.CreateDirectory(request.TargetPath);
+            await WindowsDefenderExclusions.TryAddPathAsync(request.TargetPath, _log, ct);
+
+            // Stage inside TargetPath after adding the Defender exclusion so SystemTemp AV scans do not quarantine the archive.
+            var archive = Path.Combine(request.TargetPath, $".download-xmrig-{Guid.NewGuid():N}{GuessExtension(url)}");
             try
             {
                 await using (var source = await http.GetStreamAsync(url, ct))
@@ -83,8 +87,6 @@ public sealed class InstallerService
                     await source.CopyToAsync(file, ct);
                 }
 
-                Directory.CreateDirectory(request.TargetPath);
-                await WindowsDefenderExclusions.TryAddPathAsync(request.TargetPath, _log, ct);
                 Extract(archive, request.TargetPath);
             }
             finally

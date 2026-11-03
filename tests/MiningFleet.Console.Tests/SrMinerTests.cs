@@ -160,6 +160,8 @@ public sealed class SrMinerTests
 
     [Theory]
     [InlineData("pearlhash", GpuMinerSoftware.SrMiner)]
+    [InlineData("quantus", GpuMinerSoftware.SrMiner)]
+    [InlineData("QUANTUS", GpuMinerSoftware.SrMiner)]
     [InlineData("CR29", GpuMinerSoftware.LolMiner)]
     [InlineData("NEXA", GpuMinerSoftware.LolMiner)]
     public void Algorithm_selects_the_matching_gpu_miner_binary(string algorithm, GpuMinerSoftware expected)
@@ -236,6 +238,51 @@ public sealed class SrMinerTests
         Assert.Equal("taric29.luckypool.io:3111", xtmProfile.PoolUrl);
         Assert.Equal("xtmWalletAddress", xtmProfile.Wallet);
         Assert.Equal("xtmWalletAddress/mks68i7rtx", MiningFleet.Console.FleetConfig.FormatPoolUser(xtmProfile.Wallet, "mks68i7rtx"));
+
+        var qtcProfile = config.ResolveGpuProfile("quantus");
+        Assert.Equal(GpuMinerSoftware.SrMiner, qtcProfile.Miner);
+        Assert.Equal("qtc.kryptex.network:7049", qtcProfile.PoolUrl);
+        Assert.Equal("", qtcProfile.Wallet);
+
+        config.RememberGpuProfile("quantus", "qtc-ru.kryptex.network:7049", "miner@example.com/desktop-ib88isg");
+        var rememberedQtc = config.ResolveGpuProfile("quantus");
+        Assert.Equal(GpuMinerSoftware.SrMiner, rememberedQtc.Miner);
+        Assert.Equal("qtc-ru.kryptex.network:7049", rememberedQtc.PoolUrl);
+        Assert.Equal("miner@example.com", rememberedQtc.Wallet);
+        Assert.Equal("miner@example.com/desktop-ib88isg", MiningFleet.Console.FleetConfig.FormatPoolUser(rememberedQtc.Wallet, "desktop-ib88isg"));
+    }
+
+    [Fact]
+    public void Quantus_srminer_arguments_and_target_parse_cleanly()
+    {
+        var args = GpuMinerServiceTestHooks.BuildArguments(new GpuMinerSettingsDto
+        {
+            Miner = GpuMinerSoftware.SrMiner,
+            Algorithm = "quantus",
+            PoolUrl = "qtc.kryptex.network:7049",
+            User = "qz1quantusaddress.desktop-ib88isg",
+            Password = "x",
+            ApiPort = 47802,
+        });
+
+        Assert.Contains("--algorithm-gpu", args);
+        Assert.Contains("quantus", args);
+        Assert.Contains("qtc.kryptex.network:7049", args);
+        Assert.Contains("qz1quantusaddress.desktop-ib88isg", args);
+
+        var target = MiningFleet.Console.GpuPoolService.TargetFor(new GpuMinerConfig
+        {
+            Enabled = true,
+            Miner = GpuMinerSoftware.SrMiner,
+            Algorithm = "quantus",
+            PoolUrl = "qtc-ru.kryptex.network:7049",
+            User = "qz1quantusaddress.desktop-ib88isg",
+        });
+
+        Assert.NotNull(target);
+        Assert.Equal("kryptex", target!.Provider);
+        Assert.Equal("qtc", target.Coin);
+        Assert.Equal("qz1quantusaddress", target.Address);
     }
 }
 
