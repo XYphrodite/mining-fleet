@@ -390,6 +390,12 @@ public sealed record GpuMinerSettingsDto
     public bool? RunInInteractiveSession { get; init; }
 
     /// <summary>
+    /// Additional command-line flags passed straight to the GPU miner (for example SRBMiner
+    /// <c>--gpu-cclock0</c>, <c>--gpu-coffset0</c>, <c>--gpu-plimit0</c>).
+    /// </summary>
+    public string[]? ExtraArgs { get; init; }
+
+    /// <summary>
     /// When to give the card back to whoever is using the machine. Null means never.
     /// </summary>
     public GpuPauseRuleDto? PauseWhile { get; init; }

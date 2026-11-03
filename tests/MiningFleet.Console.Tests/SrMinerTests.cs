@@ -284,6 +284,63 @@ public sealed class SrMinerTests
         Assert.Equal("qtc", target.Coin);
         Assert.Equal("qz1quantusaddress", target.Address);
     }
+
+    [Fact]
+    public void Gpu_extra_args_pass_through_to_srbminer_persist_across_merges_and_filter_srb_flags_for_lolminer()
+    {
+        using var dir = new TempDirectory();
+        var store = Store(dir);
+
+        store.Update(new MinerConfigDto
+        {
+            GpuMiner = new GpuMinerSettingsDto
+            {
+                Enabled = true,
+                Miner = GpuMinerSoftware.SrMiner,
+                Algorithm = "pearlhash",
+                PoolUrl = "prl-ru.kryptex.network:7048",
+                User = "prl1address/moscow_enjoyer",
+                ApiPort = 47802,
+                ExtraArgs = ["--gpu-cclock0", "1740", "--gpu-coffset0", "135", "--gpu-moffset0", "-1000", "--gpu-plimit0", "165"],
+            },
+        });
+
+        // A pool/coin patch that omits ExtraArgs preserves the node's tuning.
+        var merged = store.Update(new MinerConfigDto
+        {
+            GpuMiner = new GpuMinerSettingsDto
+            {
+                PoolUrl = "prl.kryptex.network:7048",
+            },
+        });
+        Assert.NotNull(merged.GpuMiner!.ExtraArgs);
+        Assert.Equal(
+            ["--gpu-cclock0", "1740", "--gpu-coffset0", "135", "--gpu-moffset0", "-1000", "--gpu-plimit0", "165"],
+            merged.GpuMiner.ExtraArgs!);
+
+        var srbArgs = GpuMinerServiceTestHooks.BuildArguments(merged.GpuMiner);
+        Assert.Contains("--gpu-cclock0", srbArgs);
+        Assert.Contains("1740", srbArgs);
+        Assert.Contains("--gpu-coffset0", srbArgs);
+        Assert.Contains("135", srbArgs);
+        Assert.Contains("--gpu-plimit0", srbArgs);
+        Assert.Contains("165", srbArgs);
+
+        // Switching software to lolMiner skips SRBMiner-only --gpu-* flags (including negative offsets)
+        // while keeping generic/lolMiner flags intact.
+        var lolArgs = GpuMinerServiceTestHooks.BuildArguments(merged.GpuMiner with
+        {
+            Miner = GpuMinerSoftware.LolMiner,
+            Algorithm = "CR29",
+            ExtraArgs = ["--gpu-cclock0", "1740", "--gpu-moffset0", "-1000", "--cclk", "1650"],
+        });
+        Assert.DoesNotContain("--gpu-cclock0", lolArgs);
+        Assert.DoesNotContain("1740", lolArgs);
+        Assert.DoesNotContain("--gpu-moffset0", lolArgs);
+        Assert.DoesNotContain("-1000", lolArgs);
+        Assert.Contains("--cclk", lolArgs);
+        Assert.Contains("1650", lolArgs);
+    }
 }
 
 /// <summary>Exposes pure helpers for tests without opening a process.</summary>

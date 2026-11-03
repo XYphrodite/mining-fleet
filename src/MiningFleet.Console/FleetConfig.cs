@@ -226,6 +226,7 @@ public sealed class FleetConfig
             Password = own?.Password ?? GpuMiner.Password ?? "x",
             ApiPort = own?.ApiPort ?? GpuMiner.ApiPort ?? DefaultGpuApiPort,
             RunInInteractiveSession = own?.RunInInteractiveSession ?? GpuMiner.RunInInteractiveSession,
+            ExtraArgs = own?.ExtraArgs ?? GpuMiner.ExtraArgs,
             PauseWhile = PauseRuleFor(GpuMiner.PauseWhile),
         };
     }
@@ -405,6 +406,9 @@ public sealed class GpuMinerConfig
     /// on some machines and not others; see <see cref="GpuMinerSettingsDto.RunInInteractiveSession"/>.
     /// </summary>
     public bool? RunInInteractiveSession { get; set; }
+
+    /// <summary>Extra CLI arguments passed to the GPU miner (e.g. SRBMiner <c>--gpu-cclock0</c>, <c>--gpu-coffset0</c>, <c>--gpu-plimit0</c>).</summary>
+    public string[]? ExtraArgs { get; set; }
 
     /// <summary>When the card should be handed back to whoever is using the machine.</summary>
     public GpuPauseConfig? PauseWhile { get; set; }

@@ -222,6 +222,7 @@ public sealed class MinerConfigStore
             ExecutablePath = patch.ExecutablePath ?? current.ExecutablePath,
             ApiPort = patch.ApiPort ?? current.ApiPort,
             RunInInteractiveSession = patch.RunInInteractiveSession ?? current.RunInInteractiveSession,
+            ExtraArgs = patch.ExtraArgs ?? current.ExtraArgs,
             PauseWhile = MergePauseRule(current.PauseWhile, patch.PauseWhile),
         };
     }

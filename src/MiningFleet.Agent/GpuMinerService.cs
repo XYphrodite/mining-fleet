@@ -38,6 +38,7 @@ public sealed class GpuMinerService : IDisposable
     private readonly LinkedList<string> _recentOutput = new();
 
     private Process? _process;
+    private bool _startedWithOcFlags;
 
     public GpuMinerService(MinerConfigStore config, ILogger<GpuMinerService> log)
     {
@@ -200,6 +201,7 @@ public sealed class GpuMinerService : IDisposable
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
             _process = process;
+            _startedWithOcFlags = NvidiaOcReset.HasOcFlags(settings.ExtraArgs);
             Notice = null;
             SetNormalPriority(process);
             _log.LogInformation("Started the GPU miner (pid {Pid}) from {Exe}", process.Id, exe);
@@ -263,7 +265,14 @@ public sealed class GpuMinerService : IDisposable
 
             _process = null;
             if (stopped > 0)
+            {
                 _config.Update(new MinerConfigDto { GpuWanted = false });
+                if (_startedWithOcFlags || NvidiaOcReset.HasOcFlags(_config.Current.GpuMiner?.ExtraArgs))
+                {
+                    _startedWithOcFlags = false;
+                    await NvidiaOcReset.TryResetAsync(_log, ct);
+                }
+            }
             return stopped > 0
                 ? CommandResultDto.Success($"Stopped {stopped} GPU miner process(es).")
                 : CommandResultDto.Failure("Found the GPU miner but could not stop it. Try running the agent elevated.");
@@ -477,12 +486,13 @@ public sealed class GpuMinerService : IDisposable
 
     private static List<string> BuildArguments(GpuMinerSettingsDto s)
     {
+        List<string> args;
         if (SoftwareOf(s) == GpuMinerSoftware.SrMiner)
         {
             // Flags from SRBMiner-MULTI's Parameters file (doktor83/SRBMiner-Multi). --wallet is the
             // pool login as the pool wants it (Kryptex: address/worker). --api-enable is required
             // for the JSON stats endpoint; the miner already binds 127.0.0.1.
-            return
+            args =
             [
                 "--disable-cpu",
                 "--algorithm-gpu", s.Algorithm!,
@@ -492,9 +502,11 @@ public sealed class GpuMinerService : IDisposable
                 "--api-enable",
                 "--api-port", s.ApiPort!.Value.ToString(),
             ];
+            AppendExtraArgs(args, s.ExtraArgs, skipSrbOnlyGpuFlags: false);
+            return args;
         }
 
-        return
+        args =
         [
             "--algo", s.Algorithm!,
             "--pool", s.PoolUrl!,
@@ -507,6 +519,27 @@ public sealed class GpuMinerService : IDisposable
             "--apihost", "127.0.0.1",
             "--apiport", s.ApiPort!.Value.ToString(),
         ];
+        AppendExtraArgs(args, s.ExtraArgs, skipSrbOnlyGpuFlags: true);
+        return args;
+    }
+
+    private static void AppendExtraArgs(List<string> target, string[]? extraArgs, bool skipSrbOnlyGpuFlags)
+    {
+        if (extraArgs is not { Length: > 0 }) return;
+        for (var i = 0; i < extraArgs.Length; i++)
+        {
+            var token = extraArgs[i];
+            if (string.IsNullOrWhiteSpace(token)) continue;
+            if (skipSrbOnlyGpuFlags && token.TrimStart().StartsWith("--gpu-", StringComparison.OrdinalIgnoreCase))
+            {
+                // Skip SRBMiner-specific --gpu-* flag and its value token (if not another --flag)
+                // so switching a tuned SRBMiner node to lolMiner does not fail on unknown flags.
+                if (i + 1 < extraArgs.Length && !extraArgs[i + 1].TrimStart().StartsWith("--", StringComparison.Ordinal))
+                    i++;
+                continue;
+            }
+            target.Add(token);
+        }
     }
 
     /// <summary>
