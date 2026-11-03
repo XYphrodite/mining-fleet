@@ -277,7 +277,25 @@ public sealed class VariantSwapSession
                     .ToHashSet(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
             }
 
-            return await _probe(fullExe, ct).ConfigureAwait(false);
+            var stagedHealthy = await _probe(fullExe, ct).ConfigureAwait(false);
+
+            // Guard against older binaries whose probe command writes a default config file into
+            // the staging directory: strip any protected file that was not part of the archive
+            // before SelfUpdateService swaps staging into installDirectory.
+            if (Directory.Exists(exeDir) && _protectedFiles.Count > 0 && _payloadFiles is not null)
+            {
+                var protectedSet = new HashSet<string>(_protectedFiles, StringComparer.OrdinalIgnoreCase);
+                foreach (var file in Directory.EnumerateFiles(exeDir, "*", SearchOption.AllDirectories))
+                {
+                    var rel = Path.GetRelativePath(exeDir, file);
+                    if (_payloadFiles.Contains(rel)) continue;
+                    if (!protectedSet.Contains(Path.GetFileName(file))) continue;
+                    try { File.Delete(file); }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+                }
+            }
+
+            return stagedHealthy;
         }
 
         // Phase 2: installed binary in installDirectory right after PayloadSwap.Swap.

@@ -35,7 +35,7 @@ foreach ($archive in $archives) {
     finally { $zip.Dispose() }
 }
 
-# Alias packages must be byte-for-byte identical to the corresponding current name.
+# Alias packages must be byte-by-byte identical to the corresponding current name.
 foreach ($archive in $archives | Where-Object Name -Like 'mining-fleet*') {
     $alias = Join-Path $output ($archive.Name -replace '^mining-fleet', 'xmrig-fleet')
     if ((Get-FileHash -LiteralPath $archive.FullName).Hash -ne (Get-FileHash -LiteralPath $alias).Hash) {
@@ -65,6 +65,9 @@ foreach ($archive in $archives | Where-Object Name -Like 'mining-fleet*') {
         $versionOutput = & $exe version
         if ($LASTEXITCODE -ne 0 -or ($versionOutput -join ' ') -notmatch [regex]::Escape($number)) {
             throw "Console version smoke test failed for $($archive.Name)."
+        }
+        if (Test-Path -LiteralPath (Join-Path $stage 'fleet.json')) {
+            throw "Console version probe created fleet.json in staging for $($archive.Name)."
         }
     }
     Write-Host "Verified $($archive.Name): $actual"

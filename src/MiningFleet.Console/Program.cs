@@ -5,6 +5,12 @@ using MiningFleet.Console.Ui;
 System.Console.OutputEncoding = System.Text.Encoding.UTF8;
 System.Console.Title = "mining-fleet";
 
+// Version and help must remain side-effect-free on disk: SelfUpdateKit probes a staged
+// executable with `version` before swapping, and writing a default fleet.json into the
+// staging directory would clobber the operator's live fleet.json during the swap.
+if (Cli.TryRunConfigFree(args, out var configFreeExit))
+    return configFreeExit;
+
 FleetConfig config;
 try
 {
@@ -15,9 +21,6 @@ catch (InvalidOperationException ex)
     AnsiConsole.MarkupLine($"[red]{Markup.Escape(ex.Message)}[/]");
     return 1;
 }
-
-// First run: leave a config on disk so the file can be edited by hand too.
-if (!File.Exists(config.Path)) config.Save();
 
 // Remove whatever the previous self-update displaced.
 UpdateService.CleanUpPreviousUpdate();
@@ -35,6 +38,9 @@ using var market = new MarketService(config);
 // One-shot mode for scripts and scheduled tasks.
 if (args.Length > 0)
     return await Cli.RunAsync(args, config, fleet, market, cts.Token);
+
+// First interactive run: leave a config on disk so the file can be edited by hand too.
+if (!File.Exists(config.Path)) config.Save();
 
 // The menu drives the cursor directly, which needs a real terminal.
 if (System.Console.IsOutputRedirected || System.Console.IsInputRedirected)

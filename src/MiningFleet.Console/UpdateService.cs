@@ -118,7 +118,8 @@ public sealed class UpdateService
         var session = new VariantSwapSession(
             InstallDirectory,
             variant,
-            FleetConsoleUpdate.ProbeExecutableAsync);
+            FleetConsoleUpdate.ProbeExecutableAsync,
+            FleetConsoleUpdate.ProtectedFileNames);
         var service = new SelfUpdateService(
             FleetConsoleUpdate.InstalledExePath(),
             FleetConsoleUpdate.InstalledVersion(),

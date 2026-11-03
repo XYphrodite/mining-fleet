@@ -15,6 +15,13 @@ public static class FleetConsoleUpdate
         [ExeName(ReleaseAssets.Product), ExeName(ReleaseAssets.LegacyProduct)];
 
     /// <summary>
+    /// Operator state beside the console executable that must never be overwritten by an update:
+    /// fleet configuration/token and local income ledgers.
+    /// </summary>
+    public static IReadOnlyList<string> ProtectedFileNames { get; } =
+        ["fleet.json", "gpu-income.json", LifetimeIncomeLedger.FileName];
+
+    /// <summary>
     /// Options for one variant. The default overload prefers <see cref="FleetVariant.Light"/>
     /// whenever this PC has the compatible .NET runtime installed, falling back to
     /// <see cref="FleetVariant.Full"/> otherwise.
@@ -34,6 +41,7 @@ public static class FleetConsoleUpdate
         options.FallbackRepositories.AddRange(tried.Skip(1));
         options.ExecutableAssetNames.AddRange(ReleaseAssets.ConsoleZipNamesFor(variant));
         options.ProbeExecutableNames.AddRange(ExeFileNames);
+        options.ExcludedFileNames.AddRange(ProtectedFileNames);
         return options;
     }
 

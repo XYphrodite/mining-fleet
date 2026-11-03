@@ -50,6 +50,33 @@ public static class Cli
           --stop       stop it, without touching the CPU miner
         """;
 
+    public static bool TryRunConfigFree(string[] args, out int exitCode)
+    {
+        if (args.Length == 0)
+        {
+            exitCode = 0;
+            return false;
+        }
+
+        var command = args[0].ToLowerInvariant().TrimStart('-', '/');
+        switch (command)
+        {
+            case "version" or "v":
+                AnsiConsole.WriteLine($"mining-fleet {UpdateService.CurrentVersion}");
+                exitCode = 0;
+                return true;
+
+            case "help" or "h" or "?":
+                AnsiConsole.WriteLine(Usage);
+                exitCode = 0;
+                return true;
+
+            default:
+                exitCode = 0;
+                return false;
+        }
+    }
+
     public static async Task<int> RunAsync(string[] args, FleetConfig config, FleetService fleet, MarketService market, CancellationToken ct)
     {
         var command = args[0].ToLowerInvariant().TrimStart('-');

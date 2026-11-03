@@ -88,6 +88,56 @@ public sealed class SelfUpdateWiringTests
     }
 
     [Fact]
+    public void Console_options_protect_every_operator_state_file()
+    {
+        var options = FleetConsoleUpdate.Options(new UpdateConfig());
+
+        Assert.Contains("fleet.json", FleetConsoleUpdate.ProtectedFileNames, StringComparer.OrdinalIgnoreCase);
+        Assert.Contains("gpu-income.json", FleetConsoleUpdate.ProtectedFileNames, StringComparer.OrdinalIgnoreCase);
+        Assert.Contains(LifetimeIncomeLedger.FileName, FleetConsoleUpdate.ProtectedFileNames, StringComparer.OrdinalIgnoreCase);
+        foreach (var name in FleetConsoleUpdate.ProtectedFileNames)
+            Assert.Contains(name, options.ExcludedFileNames, StringComparer.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("version")]
+    [InlineData("--version")]
+    [InlineData("-v")]
+    [InlineData("help")]
+    [InlineData("--help")]
+    public void Config_free_cli_commands_succeed_without_touching_config(string arg)
+    {
+        Assert.True(Cli.TryRunConfigFree([arg], out var exitCode));
+        Assert.Equal(0, exitCode);
+    }
+
+    [Fact]
+    public async Task Staged_probe_strips_stray_protected_files_created_as_side_effect()
+    {
+        using var installDir = new TempDirectory();
+        using var stageDir = new TempDirectory();
+        var stagedExe = Path.Combine(stageDir.Path, "mining-fleet.exe");
+        File.WriteAllBytes(stagedExe, [(byte)'M', (byte)'Z', 0]);
+
+        var session = new VariantSwapSession(
+            installDir.Path,
+            FleetVariant.Light,
+            probe: (exe, _) =>
+            {
+                // Simulate an older console whose `version` command wrote a blank fleet.json in staging.
+                File.WriteAllText(Path.Combine(Path.GetDirectoryName(exe)!, "fleet.json"), "{}");
+                return Task.FromResult(true);
+            },
+            FleetConsoleUpdate.ProtectedFileNames);
+
+        var ok = await session.ProbeAsync(stagedExe, CancellationToken.None);
+
+        Assert.True(ok);
+        Assert.True(File.Exists(stagedExe));
+        Assert.False(File.Exists(Path.Combine(stageDir.Path, "fleet.json")));
+    }
+
+    [Fact]
     public void Installed_exe_prefers_what_is_on_disk()
     {
         using var dir = new TempDirectory();
