@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.Json;
+using MiningFleet.Contracts;
 
 namespace MiningFleet.Console;
 
@@ -110,7 +111,7 @@ public sealed class GpuPoolService : IDisposable
 
     public GpuPoolService(HttpMessageHandler? handler = null, TimeProvider? clock = null)
     {
-        _http = handler is null ? new HttpClient() : new HttpClient(handler);
+        _http = new HttpClient(handler ?? new ProxyFallbackHandler());
         _http.Timeout = TimeSpan.FromSeconds(12);
         // CoinGecko rejects requests without a User-Agent header with HTTP 403.
         _http.DefaultRequestHeaders.UserAgent.ParseAdd("mining-fleet-console");

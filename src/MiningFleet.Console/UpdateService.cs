@@ -44,7 +44,7 @@ public sealed class UpdateService
         ReleaseDescriptor release;
         try
         {
-            using var source = new GitHubReleaseSource(FleetConsoleUpdate.Options(_config, preferred));
+            using var source = new GitHubReleaseSource(FleetConsoleUpdate.Options(_config, preferred), new ProxyFallbackHandler());
             release = await source.ResolveAsync(null, ct);
         }
         catch (InvalidDataException) when (preferred == FleetVariant.Light)
@@ -52,7 +52,7 @@ public sealed class UpdateService
             chosenVariant = FleetVariant.Full;
             try
             {
-                using var fallback = new GitHubReleaseSource(FleetConsoleUpdate.Options(_config, FleetVariant.Full));
+                using var fallback = new GitHubReleaseSource(FleetConsoleUpdate.Options(_config, FleetVariant.Full), new ProxyFallbackHandler());
                 release = await fallback.ResolveAsync(null, ct);
             }
             catch (InvalidDataException ex)
@@ -114,7 +114,7 @@ public sealed class UpdateService
         CancellationToken ct)
     {
         var options = FleetConsoleUpdate.Options(_config, variant);
-        using var source = new GitHubReleaseSource(options);
+        using var source = new GitHubReleaseSource(options, new ProxyFallbackHandler());
         var session = new VariantSwapSession(
             InstallDirectory,
             variant,

@@ -79,7 +79,7 @@ public sealed class AgentUpdateService
         var chosenVariant = preferred;
         try
         {
-            using var source = new GitHubReleaseSource(FleetAgentUpdate.Options(preferred));
+            using var source = new GitHubReleaseSource(FleetAgentUpdate.Options(preferred), new ProxyFallbackHandler());
             release = await source.ResolveAsync(normalizedTag, ct);
         }
         catch (InvalidDataException) when (preferred == FleetVariant.Light)
@@ -87,7 +87,7 @@ public sealed class AgentUpdateService
             chosenVariant = FleetVariant.Full;
             try
             {
-                using var fallbackSource = new GitHubReleaseSource(FleetAgentUpdate.Options(FleetVariant.Full));
+                using var fallbackSource = new GitHubReleaseSource(FleetAgentUpdate.Options(FleetVariant.Full), new ProxyFallbackHandler());
                 release = await fallbackSource.ResolveAsync(normalizedTag, ct);
             }
             catch (Exception ex) when (ex is HttpRequestException or InvalidDataException)
@@ -120,7 +120,7 @@ public sealed class AgentUpdateService
             {
                 _log.LogWarning(ex, "Light agent payload could not run on this machine; falling back to full package");
                 chosenVariant = FleetVariant.Full;
-                using var fullSource = new GitHubReleaseSource(FleetAgentUpdate.Options(FleetVariant.Full));
+                using var fullSource = new GitHubReleaseSource(FleetAgentUpdate.Options(FleetVariant.Full), new ProxyFallbackHandler());
                 var fullRelease = await fullSource.ResolveAsync(release.Tag, ct);
                 report = await ApplyVariantAsync(FleetVariant.Full, fullRelease, ct);
             }
@@ -152,7 +152,7 @@ public sealed class AgentUpdateService
         var variantLabel = variant == FleetVariant.Light ? "light" : "full";
         _log.LogInformation("Agent update: installing {Tag} ({Variant})", release.Tag, variantLabel);
         var options = FleetAgentUpdate.Options(variant);
-        using var source = new GitHubReleaseSource(options);
+        using var source = new GitHubReleaseSource(options, new ProxyFallbackHandler());
         var session = new VariantSwapSession(
             InstallDirectory,
             variant,

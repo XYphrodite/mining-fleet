@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.Json;
+using MiningFleet.Contracts;
 
 namespace MiningFleet.Console;
 
@@ -58,7 +59,7 @@ public sealed class XtmIncomeService : IDisposable
 
     public XtmIncomeService(HttpMessageHandler? handler = null, TimeProvider? clock = null)
     {
-        _http = handler is null ? new HttpClient() : new HttpClient(handler);
+        _http = new HttpClient(handler ?? new ProxyFallbackHandler());
         _http.Timeout = TimeSpan.FromSeconds(12);
         _http.DefaultRequestHeaders.UserAgent.ParseAdd("mining-fleet-console");
         _clock = clock ?? TimeProvider.System;

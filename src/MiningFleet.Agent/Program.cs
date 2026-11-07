@@ -72,7 +72,7 @@ builder.Services.AddHttpClient("github", client =>
     // The GitHub API rejects requests without a User-Agent.
     client.DefaultRequestHeaders.UserAgent.ParseAdd(AgentIdentity.Name);
     client.Timeout = TimeSpan.FromMinutes(5);
-});
+}).ConfigurePrimaryHttpMessageHandler(() => new ProxyFallbackHandler());
 // Deliberately left on the system proxy. Bypassing it looked right - the console and the xmrig
 // API reader both bypass it, because tailnet addresses must never go through a VPN client - but
 // those are local addresses. GitHub is not: on desktop-ib88isg the proxy is the only route out,

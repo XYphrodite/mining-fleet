@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using MiningFleet.Contracts;
 
 namespace MiningFleet.Console;
 
@@ -58,11 +59,15 @@ public sealed class MarketService : IDisposable
     public const int DefaultBlockTimeSeconds = 120;
 
     private readonly FleetConfig _config;
-    private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(12) };
+    private readonly HttpClient _http;
 
-    public MarketService(FleetConfig config)
+    public MarketService(FleetConfig config, HttpMessageHandler? handler = null)
     {
         _config = config;
+        _http = new HttpClient(handler ?? new ProxyFallbackHandler())
+        {
+            Timeout = TimeSpan.FromSeconds(12),
+        };
         _http.DefaultRequestHeaders.UserAgent.ParseAdd("mining-fleet-console");
     }
 
