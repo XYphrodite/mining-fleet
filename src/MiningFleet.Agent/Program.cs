@@ -121,7 +121,7 @@ var api = app.MapGroup("/api/v1");
 
 api.MapGet("/info", () => Info());
 
-api.MapGet("/status", async (MinerService miner, HardwareService hw, ThrottleService throttle, SessionMonitorService monitor, GpuMinerService gpu, MinerWatchdogService watchdog, LifetimeTrackerService lifetime, CancellationToken ct) =>
+api.MapGet("/status", async (MinerService miner, HardwareService hw, ThrottleService throttle, SessionMonitorService monitor, GpuMinerService gpu, MinerWatchdogService watchdog, LifetimeTrackerService lifetime, MinerConfigStore store, IOptions<AgentOptions> opts, CancellationToken ct) =>
 {
     // Sensors and the two miner APIs are independent, so read them together. Both miner reads are
     // capped by their own three-second client timeout, so this stays inside the console's eight.
@@ -136,6 +136,7 @@ api.MapGet("/status", async (MinerService miner, HardwareService hw, ThrottleSer
         GpuMiner = gpuTask.Result with { WatchdogNotice = watchdog.GpuNotice },
         GameMining = GameMiningStatusReader.Read(basePath, DateTimeOffset.UtcNow),
         Lifetime = lifetime.Snapshot(),
+        PricePerKwh = store.EffectivePricePerKwh(opts.Value.PricePerKwh),
     };
 });
 

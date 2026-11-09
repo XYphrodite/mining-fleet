@@ -147,8 +147,22 @@ public sealed class FleetConfig
     /// </summary>
     private static string Sanitize(string token) => token.Trim().Trim('﻿', '​');
 
-    /// <summary>The tariff that actually applies to a node: its own, else the fleet default.</summary>
-    public double PricePerKwhFor(NodeConfig node) => node.PricePerKwh ?? Electricity.PricePerKwh;
+    /// <summary>
+    /// Node-specific tariff when one exists: the tariff stored on the agent itself wins when
+    /// reported in <paramref name="snapshot"/>, falling back to any legacy/offline override in
+    /// <c>fleet.json</c>, or null when the node uses the fleet default.
+    /// </summary>
+    public double? OwnPricePerKwhFor(NodeConfig node, NodeSnapshotDto? snapshot = null) =>
+        (snapshot?.PricePerKwh is { } agentRate && double.IsFinite(agentRate) && agentRate >= 0 ? (double?)agentRate : null)
+        ?? (node.PricePerKwh is { } localRate && double.IsFinite(localRate) && localRate >= 0 ? (double?)localRate : null);
+
+    /// <summary>The tariff that actually applies to a node: agent's own, else local fallback, else fleet default.</summary>
+    public double PricePerKwhFor(NodeConfig node, NodeSnapshotDto? snapshot = null) =>
+        OwnPricePerKwhFor(node, snapshot) ?? Electricity.PricePerKwh;
+
+    /// <summary>The tariff that actually applies to a polled node state.</summary>
+    public double PricePerKwhFor(NodeState state) =>
+        PricePerKwhFor(state.Node, state.Snapshot);
 
     /// <summary>
     /// The throttle rules a node should actually run: the fleet's, with that node's exceptions

@@ -51,7 +51,7 @@ public sealed class SettingsScreen
                     break;
 
                 case "Electricity price":
-                    AnsiConsole.MarkupLine("[grey]This is the fleet default. A node with its own tariff keeps it — set that under Nodes.[/]");
+                    AnsiConsole.MarkupLine("[grey]This is the fleet default for nodes without a tariff stored on their agent (set per-node tariffs under Nodes or with 'mining-fleet tariff').[/]");
                     _config.Electricity.PricePerKwh = AnsiConsole.Prompt(
                         new TextPrompt<double>("Default price per kWh:").DefaultValue(_config.Electricity.PricePerKwh));
                     _config.Electricity.Currency = AnsiConsole.Prompt(

@@ -36,6 +36,12 @@ public sealed class AgentOptions
 
     /// <summary>How often the counter query is collected. One second matches what Task Manager does.</summary>
     public int PerformanceCounterIntervalMs { get; set; } = 1000;
+
+    /// <summary>
+    /// Optional installed default electricity tariff (price per kWh). Overridden by
+    /// <see cref="MinerConfigDto.PricePerKwh"/> in <c>miner.json</c> once set via the API.
+    /// </summary>
+    public double? PricePerKwh { get; set; }
 }
 
 /// <summary>
@@ -115,6 +121,9 @@ public sealed class MinerConfigStore
                 Password = patch.Password ?? _current.Password,
                 ExtraArgs = patch.ExtraArgs ?? _current.ExtraArgs,
                 PowerFallbackWatts = patch.PowerFallbackWatts ?? _current.PowerFallbackWatts,
+                PricePerKwh = patch.ClearPricePerKwh == true
+                    ? null
+                    : SanitizeTariff(patch.PricePerKwh) ?? _current.PricePerKwh,
                 KeepMonitorOpen = patch.KeepMonitorOpen ?? _current.KeepMonitorOpen,
                 AutoStartMiner = patch.AutoStartMiner ?? _current.AutoStartMiner,
                 Throttle = MergeThrottle(_current.Throttle, patch.Throttle),
@@ -172,6 +181,20 @@ public sealed class MinerConfigStore
         (config.AutoStartMiner ?? installedDefault)
         && config.MinerStoppedByThrottle != true
         && config.MinerStoppedByPause != true;
+
+    /// <summary>
+    /// Electricity tariff stored on this node, preferring <c>miner.json</c> over any installed
+    /// <c>appsettings.json</c> default, or null when neither is set.
+    /// </summary>
+    public double? EffectivePricePerKwh(double? installedDefault) =>
+        EffectivePricePerKwh(Current, installedDefault);
+
+    /// <inheritdoc cref="EffectivePricePerKwh(double?)"/>
+    public static double? EffectivePricePerKwh(MinerConfigDto config, double? installedDefault) =>
+        SanitizeTariff(config.PricePerKwh) ?? SanitizeTariff(installedDefault);
+
+    private static double? SanitizeTariff(double? value) =>
+        value is { } v && double.IsFinite(v) && v >= 0 ? v : null;
 
     /// <summary>
     /// Folds a throttle patch into what the node already has, field by field.

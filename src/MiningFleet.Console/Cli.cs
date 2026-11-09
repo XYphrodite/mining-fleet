@@ -1,3 +1,4 @@
+using System.Globalization;
 using Spectre.Console;
 using MiningFleet.Console.Ui;
 using MiningFleet.Contracts;
@@ -25,6 +26,7 @@ public static class Cli
           upgrade-agents update the agent on the nodes themselves
           throttle       show, push or pin the mining power limit
           autostart      show or set whether a node mines as soon as it boots
+          tariff         show, set or clear the electricity tariff on each node
           version        print the running version
           help           this text
 
@@ -48,6 +50,12 @@ public static class Cli
           --sync       push the algorithm, pool and pause rule from fleet.json
           --start      start GPU mining
           --stop       stop it, without touching the CPU miner
+
+        tariff [node ...] [--set=N | --default | --sync]
+          no options   query each node's agent and report its electricity tariff
+          --set=N      store N (price per kWh) on the node's agent
+          --default    clear the node's stored tariff so it uses the fleet default
+          --sync       push local per-node tariffs from fleet.json onto the agents
         """;
 
     public static bool TryRunConfigFree(string[] args, out int exitCode)
@@ -122,6 +130,9 @@ public static class Cli
 
             case "autostart":
                 return await AutoStartAsync(config, fleet, names, ct);
+
+            case "tariff" or "tariffs":
+                return await TariffAsync(config, fleet, names, ct);
 
             case "gpu":
                 return await GpuAsync(config, fleet, names, ct);
@@ -515,6 +526,114 @@ public static class Cli
 
         var set = on ? true : off ? false : (bool?)null;
         return await ControlAsync(config, fleet, names, FleetService.AutoStartAction(set), ct);
+    }
+
+    /// <summary>
+    /// Queries, sets, clears or syncs the per-node electricity tariff stored on each agent.
+    /// </summary>
+    public static async Task<int> TariffAsync(FleetConfig config, FleetService fleet, string[] args, CancellationToken ct)
+    {
+        var names = args.Where(a => !a.StartsWith('-')).ToArray();
+        var clear = args.Contains("--default") || args.Contains("--clear");
+        var sync = args.Contains("--sync");
+
+        double? setRate = null;
+        if (args.FirstOrDefault(a => a.StartsWith("--set=", StringComparison.OrdinalIgnoreCase)) is { } setArg)
+        {
+            var raw = setArg[6..].Trim().Replace(',', '.');
+            if (!double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
+                || !double.IsFinite(parsed)
+                || parsed < 0)
+            {
+                AnsiConsole.MarkupLine("[red]--set needs a non-negative number (e.g. --set=6.8 or --set=0.01).[/]");
+                return 2;
+            }
+            setRate = parsed;
+        }
+
+        var flagCount = (setRate is not null ? 1 : 0) + (clear ? 1 : 0) + (sync ? 1 : 0);
+        if (flagCount > 1)
+        {
+            AnsiConsole.MarkupLine("[red]Choose only one of --set, --default, or --sync.[/]");
+            return 2;
+        }
+
+        var targets = names.Length == 0
+            ? fleet.EnabledNodes
+            : names.Select(config.FindNode).OfType<NodeConfig>().ToList();
+
+        var missing = names.Where(n => config.FindNode(n) is null).ToList();
+        foreach (var name in missing)
+            AnsiConsole.MarkupLine($"[red]No node named '{Markup.Escape(name)}'.[/]");
+
+        if (targets.Count == 0)
+        {
+            AnsiConsole.MarkupLine("[yellow]Nothing to do.[/]");
+            return 1;
+        }
+
+        var currency = config.Electricity.Currency;
+        var fleetDefault = config.Electricity.PricePerKwh;
+
+        if (setRate is not null || clear)
+        {
+            var results = await fleet.ForEachAsync(
+                targets,
+                FleetService.TariffAction(setRate, clear, currency, fleetDefault),
+                ct);
+            foreach (var (node, result) in results.OrderBy(r => r.Node.Name, StringComparer.OrdinalIgnoreCase))
+                UiHelpers.Result(result.Ok, $"{node.Name}: {result.Message}");
+
+            return results.All(r => r.Result.Ok) && missing.Count == 0 ? 0 : 1;
+        }
+
+        if (sync)
+        {
+            var results = await fleet.SyncTariffsAsync(targets, ct);
+            foreach (var (node, result) in results.OrderBy(r => r.Node.Name, StringComparer.OrdinalIgnoreCase))
+                UiHelpers.Result(result.Ok, $"{node.Name}: {result.Message}");
+
+            return results.All(r => r.Result.Ok) && missing.Count == 0 ? 0 : 1;
+        }
+
+        var states = await Task.WhenAll(
+            targets.Select(n => fleet.PollNodeAsync(n, ct, TimeSpan.FromSeconds(4))));
+
+        var table = new Table().Border(TableBorder.Rounded).BorderColor(Color.Grey35)
+            .AddColumn("Node")
+            .AddColumn("State")
+            .AddColumn(new TableColumn($"Agent ({UiHelpers.Escape(currency)}/kWh)").RightAligned())
+            .AddColumn(new TableColumn($"Effective ({UiHelpers.Escape(currency)}/kWh)").RightAligned())
+            .AddColumn("Source");
+
+        foreach (var state in states.OrderBy(s => s.Node.Name, StringComparer.OrdinalIgnoreCase))
+        {
+            var agentRate = state.Snapshot?.PricePerKwh is { } ar && double.IsFinite(ar) && ar >= 0 ? ar : (double?)null;
+            var localRate = state.Node.PricePerKwh is { } lr && double.IsFinite(lr) && lr >= 0 ? lr : (double?)null;
+            var effective = config.PricePerKwhFor(state);
+
+            var agentCell = !state.Online
+                ? "[grey]offline[/]"
+                : agentRate is { } a
+                    ? $"[aqua]{a:0.00##}[/]"
+                    : "[grey]-[/]";
+
+            var source = agentRate is not null
+                ? "[green]agent[/]"
+                : localRate is not null
+                    ? (state.Online ? "[yellow]local fleet.json (run tariff --sync)[/]" : "[grey]local fallback[/]")
+                    : "[grey]fleet default[/]";
+
+            table.AddRow(
+                new Markup($"[bold]{UiHelpers.Escape(state.Node.Name)}[/]"),
+                new Markup(UiHelpers.StatusBadge(state)),
+                new Markup(agentCell),
+                new Markup($"{effective:0.00##}"),
+                new Markup(source));
+        }
+
+        AnsiConsole.Write(table);
+        return missing.Count == 0 ? 0 : 1;
     }
 
     private static async Task<int> ControlAsync(

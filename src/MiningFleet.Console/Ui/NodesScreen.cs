@@ -1,3 +1,4 @@
+using System.Globalization;
 using Spectre.Console;
 using MiningFleet.Contracts;
 
@@ -20,7 +21,7 @@ public sealed class NodesScreen
         while (!ct.IsCancellationRequested)
         {
             UiHelpers.Header("Nodes");
-            RenderList();
+            await RenderListAsync(ct);
 
             var choice = AnsiConsole.Prompt(UiHelpers.Menu("Action", "< back",
                     "Discover from tailnet",
@@ -35,7 +36,7 @@ public sealed class NodesScreen
             switch (choice)
             {
                 case "Discover from tailnet": await DiscoverAsync(ct); break;
-                case "Add manually": AddManually(); break;
+                case "Add manually": await AddManuallyAsync(ct); break;
                 case "Edit node": await EditAsync(ct); break;
                 case "Test connection": await TestAsync(ct); break;
                 case "Update agents": await UpdateAgentsAsync(ct); break;
@@ -46,7 +47,7 @@ public sealed class NodesScreen
         }
     }
 
-    private void RenderList()
+    private async Task RenderListAsync(CancellationToken ct)
     {
         if (_config.Nodes.Count == 0)
         {
@@ -55,19 +56,34 @@ public sealed class NodesScreen
             return;
         }
 
+        IReadOnlyList<NodeState> states = [];
+        await AnsiConsole.Status().StartAsync("Querying node agents...", async _ =>
+        {
+            states = await Task.WhenAll(
+                _config.Nodes.Select(n => _fleet.PollNodeAsync(n, ct, TimeSpan.FromSeconds(2.5))));
+        });
+        var stateByName = states.ToDictionary(s => s.Node.Name, StringComparer.OrdinalIgnoreCase);
+
         var table = new Table().Border(TableBorder.Rounded).BorderColor(Color.Grey35)
             .AddColumn("Name").AddColumn("Endpoint").AddColumn("Enabled").AddColumn("Miner path")
             .AddColumn("Fallback W").AddColumn($"{UiHelpers.Escape(_config.Electricity.Currency)}/kWh");
 
         foreach (var node in _config.Nodes)
         {
+            stateByName.TryGetValue(node.Name, out var state);
+            var tariffCell = state?.Snapshot?.PricePerKwh is { } agentRate && double.IsFinite(agentRate) && agentRate >= 0
+                ? $"{agentRate:0.00##}"
+                : node.PricePerKwh is { } localRate && double.IsFinite(localRate) && localRate >= 0
+                    ? $"{localRate:0.00##} [grey](local)[/]"
+                    : $"[grey]{_config.Electricity.PricePerKwh:0.00##}[/]";
+
             table.AddRow(
                 UiHelpers.Escape(node.Name),
                 UiHelpers.Escape($"{node.Host}:{node.Port}"),
                 node.Enabled ? "[green]yes[/]" : "[grey]no[/]",
                 UiHelpers.Escape(node.MinerPath ?? "-"),
                 node.PowerFallbackWatts is { } w ? $"{w:0}" : "[grey]-[/]",
-                node.PricePerKwh is { } rate ? $"{rate:N2}" : $"[grey]{_config.Electricity.PricePerKwh:N2}[/]");
+                tariffCell);
         }
 
         AnsiConsole.Write(table);
@@ -134,7 +150,7 @@ public sealed class NodesScreen
         UiHelpers.Pause();
     }
 
-    private void AddManually()
+    private async Task AddManuallyAsync(CancellationToken ct)
     {
         UiHelpers.Header("Add node");
 
@@ -143,22 +159,23 @@ public sealed class NodesScreen
         var host = AnsiConsole.Ask<string>("Tailscale IP or MagicDNS name:");
         var port = AnsiConsole.Prompt(new TextPrompt<int>("Agent port:").DefaultValue(_config.AgentPort));
         var watts = AnsiConsole.Prompt(new TextPrompt<double>("Fallback watts (used when no power sensor):").DefaultValue(0d));
-        var rate = AnsiConsole.Prompt(new TextPrompt<double>(
-                $"Electricity at this machine, {UiHelpers.Escape(_config.Electricity.Currency)}/kWh " +
-                $"(0 = use the fleet default of {_config.Electricity.PricePerKwh:N2}):")
-            .DefaultValue(0d));
+        var tariff = PromptTariff(null);
 
-        _config.Nodes.Add(new NodeConfig
+        var node = new NodeConfig
         {
             Name = name,
             Host = host,
             Port = port,
             PowerFallbackWatts = watts > 0 ? watts : null,
-            PricePerKwh = rate > 0 ? rate : null,
-        });
+            PricePerKwh = tariff,
+        };
+        _config.Nodes.Add(node);
         _config.Save();
 
         UiHelpers.Result(true, $"Added {name}.");
+        if (AnsiConsole.Confirm("Push tariff and pool settings to the agent now?", defaultValue: true))
+            await PushConfigAsync(node, tariff, ct);
+
         UiHelpers.Pause();
     }
 
@@ -169,6 +186,16 @@ public sealed class NodesScreen
 
         UiHelpers.Header($"Edit {node.Name}");
 
+        double? agentTariff = null;
+        try
+        {
+            using var probe = _fleet.CreateClient(node, TimeSpan.FromSeconds(3));
+            agentTariff = (await probe.GetConfigAsync(ct))?.PricePerKwh;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException)
+        {
+        }
+
         node.Host = AnsiConsole.Prompt(UiHelpers.Text("Host:").DefaultValue(node.Host));
         node.Port = AnsiConsole.Prompt(new TextPrompt<int>("Agent port:").DefaultValue(node.Port));
         node.MinerPath = NullIfBlank(AnsiConsole.Prompt(
@@ -177,25 +204,58 @@ public sealed class NodesScreen
         var watts = AnsiConsole.Prompt(new TextPrompt<double>("Fallback watts (0 = none):").DefaultValue(node.PowerFallbackWatts ?? 0));
         node.PowerFallbackWatts = watts > 0 ? watts : null;
 
-        var rate = AnsiConsole.Prompt(new TextPrompt<double>(
-                $"Electricity at this machine, {UiHelpers.Escape(_config.Electricity.Currency)}/kWh " +
-                $"(0 = use the fleet default of {_config.Electricity.PricePerKwh:N2}):")
-            .DefaultValue(node.PricePerKwh ?? 0));
-        node.PricePerKwh = rate > 0 ? rate : null;
+        var tariff = PromptTariff(agentTariff ?? node.PricePerKwh);
+        node.PricePerKwh = tariff;
 
         node.Token = NullIfBlank(AnsiConsole.Prompt(
             UiHelpers.Text("Token override (blank uses the fleet token):").AllowEmpty().DefaultValue(node.Token ?? "")));
 
         _config.Save();
 
-        // Push the settings the agent itself needs to know about.
-        if (AnsiConsole.Confirm("Push pool/wallet/path settings to the agent now?", defaultValue: true))
-            await PushConfigAsync(node, ct);
+        // Push the settings the agent itself needs to know about (including the node tariff).
+        if (AnsiConsole.Confirm("Push tariff and pool/wallet/path settings to the agent now?", defaultValue: true))
+            await PushConfigAsync(node, tariff, ct);
 
         UiHelpers.Pause();
     }
 
-    private async Task PushConfigAsync(NodeConfig node, CancellationToken ct)
+    private double? PromptTariff(double? current)
+    {
+        var raw = AnsiConsole.Prompt(
+            UiHelpers.Text(
+                $"Electricity on this agent, {UiHelpers.Escape(_config.Electricity.Currency)}/kWh " +
+                $"(blank = fleet default {_config.Electricity.PricePerKwh:0.00##}):")
+            .AllowEmpty()
+            .DefaultValue(current is { } c ? c.ToString("0.####", CultureInfo.InvariantCulture) : "")
+            .Validate(v =>
+            {
+                if (string.IsNullOrWhiteSpace(v) || string.Equals(v.Trim(), "default", StringComparison.OrdinalIgnoreCase))
+                    return ValidationResult.Success();
+                return TryParseTariff(v, out _)
+                    ? ValidationResult.Success()
+                    : ValidationResult.Error("[red]Enter a non-negative number (e.g. 6.8 or 0.01) or leave blank for default[/]");
+            }));
+
+        if (string.IsNullOrWhiteSpace(raw) || string.Equals(raw.Trim(), "default", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        return TryParseTariff(raw, out var parsed) ? parsed : null;
+    }
+
+    private static bool TryParseTariff(string raw, out double tariff)
+    {
+        var normalized = raw.Trim().Replace(',', '.');
+        if (double.TryParse(normalized, NumberStyles.Float, CultureInfo.InvariantCulture, out tariff)
+            && double.IsFinite(tariff)
+            && tariff >= 0)
+        {
+            return true;
+        }
+        tariff = 0;
+        return false;
+    }
+
+    private async Task PushConfigAsync(NodeConfig node, double? tariff, CancellationToken ct)
     {
         using var client = _fleet.CreateClient(node, TimeSpan.FromSeconds(20));
         try
@@ -208,15 +268,29 @@ public sealed class NodesScreen
                 WorkerName = node.Name,
                 Password = _config.Pool.Password,
                 PowerFallbackWatts = node.PowerFallbackWatts,
+                PricePerKwh = tariff,
+                ClearPricePerKwh = tariff is null ? true : null,
             }, ct);
+
+            if (pushed is not null)
+            {
+                var storedOnAgent = tariff is null
+                    ? pushed.PricePerKwh is null
+                    : pushed.PricePerKwh is { } p && Math.Abs(p - tariff.Value) < 1e-6;
+                if (storedOnAgent && node.PricePerKwh is not null)
+                {
+                    node.PricePerKwh = null;
+                    _config.Save();
+                }
+            }
 
             UiHelpers.Result(pushed is not null, pushed is null
                 ? "Agent returned no config."
-                : $"Agent config updated (exe: {pushed.ExecutablePath ?? "not set"}).");
+                : $"Agent config updated (exe: {pushed.ExecutablePath ?? "not set"}, tariff: {(pushed.PricePerKwh is { } t ? $"{t:0.00##} {_config.Electricity.Currency}/kWh" : "fleet default")}).");
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
         {
-            UiHelpers.Result(false, $"{node.Name}: {ex.Message}");
+            UiHelpers.Result(false, $"{node.Name}: {ex.Message} (tariff kept locally until agent is reachable)");
         }
     }
 

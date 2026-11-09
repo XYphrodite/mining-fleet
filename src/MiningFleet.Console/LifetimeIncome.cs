@@ -165,6 +165,20 @@ public sealed class LifetimeIncomeLedger
                 }
 
                 rec.NodeName = state.Node.Name;
+                if (state.Snapshot.PricePerKwh is { } agentTariff && double.IsFinite(agentTariff) && agentTariff >= 0)
+                {
+                    if (rec.LastPricePerKwh != agentTariff)
+                    {
+                        rec.LastPricePerKwh = agentTariff;
+                        dirty = true;
+                    }
+                }
+                else if (rec.LastPricePerKwh is not null && AgentSupportsTariff(state.Snapshot.Agent.AgentVersion))
+                {
+                    rec.LastPricePerKwh = null;
+                    dirty = true;
+                }
+
                 if (lt.StartedAt != default && (rec.TrackedSince == default || lt.StartedAt < rec.TrackedSince))
                 {
                     rec.TrackedSince = lt.StartedAt;
@@ -482,7 +496,10 @@ public sealed class LifetimeIncomeLedger
         double? knownRevenue = anyKnown ? (cpuRevenue ?? 0.0) + knownGpuSum : null;
 
         var kwh = rec.EnergyKwh;
-        var cost = kwh * config.PricePerKwhFor(nodeCfg);
+        var tariff = (state?.Snapshot?.PricePerKwh is { } liveRate && double.IsFinite(liveRate) && liveRate >= 0 ? (double?)liveRate : null)
+            ?? (rec.LastPricePerKwh is { } savedRate && double.IsFinite(savedRate) && savedRate >= 0 ? (double?)savedRate : null)
+            ?? config.PricePerKwhFor(nodeCfg);
+        var cost = kwh * tariff;
         double? netProfit = totalRevenue is { } tr ? tr - cost : null;
 
         return new NodeLifetimeSummary(
@@ -507,6 +524,15 @@ public sealed class LifetimeIncomeLedger
             kwh,
             cost,
             netProfit);
+    }
+
+    private static readonly Version MinTariffAgentVersion = new(1, 17, 47);
+
+    private static bool AgentSupportsTariff(string? agentVersion)
+    {
+        if (string.IsNullOrWhiteSpace(agentVersion)) return false;
+        var clean = agentVersion.Trim().TrimStart('v', 'V').Split('-', '+')[0];
+        return Version.TryParse(clean, out var v) && v >= MinTariffAgentVersion;
     }
 
     private static bool OnlineNeedsUpgrade(bool online, NodeState? state) =>
@@ -655,6 +681,7 @@ public sealed class LifetimeIncomeLedger
         public double CpuXmr { get; set; }
         public double PendingCpuHashes { get; set; }
         public double EnergyKwh { get; set; }
+        public double? LastPricePerKwh { get; set; }
 
         public double LastActiveMiningSeconds { get; set; }
         public double LastPoweredMiningSeconds { get; set; }

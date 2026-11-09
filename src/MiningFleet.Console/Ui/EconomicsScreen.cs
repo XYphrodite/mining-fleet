@@ -67,7 +67,7 @@ public sealed class EconomicsScreen
             summary.AddRow("[grey]Fleet GPU rate[/]", $"[aqua]{UiHelpers.Escape(Economics.FormatGpuFleetRate(states))}[/]");
         }
         summary.AddRow("[grey]Power draw[/]", $"{economics.TotalWatts:0} W");
-        var overrides = _config.Nodes.Count(n => n.Enabled && n.PricePerKwh is not null);
+        var overrides = states.Count(s => _config.OwnPricePerKwhFor(s.Node, s.Snapshot) is not null);
         summary.AddRow("[grey]Electricity[/]",
             $"{_config.Electricity.PricePerKwh:N2} {UiHelpers.Escape(currency)} / kWh"
             + (overrides > 0 ? $" [grey](default; {overrides} node(s) on their own tariff)[/]" : ""));
@@ -201,6 +201,7 @@ public sealed class EconomicsScreen
                 .AddColumn(new TableColumn("GPU/day").RightAligned())
                 .AddColumn(new TableColumn("Total/day").RightAligned())
                 .AddColumn(new TableColumn("Watts").RightAligned())
+                .AddColumn(new TableColumn($"{UiHelpers.Escape(currency)}/kWh").RightAligned())
                 .AddColumn(new TableColumn("Cost").RightAligned())
                 .AddColumn(new TableColumn("Profit").RightAligned());
 
@@ -231,6 +232,9 @@ public sealed class EconomicsScreen
                     new Markup(gpuCell),
                     new Markup(totalCell),
                     new Markup($"{state.PowerWatts:0}"),
+                    new Markup(config.OwnPricePerKwhFor(state.Node, state.Snapshot) is { } own
+                        ? $"{own:0.00##}"
+                        : $"[grey]{config.Electricity.PricePerKwh:0.00##}[/]"),
                     new Markup(money.CompactMarkup(node.CostPerDay)),
                     new Markup(money.Signed(node.ProfitPerDay)));
             }
@@ -250,6 +254,7 @@ public sealed class EconomicsScreen
                             ? $"[bold]{money.Markup(kr)}[/] [yellow](partial)[/]"
                             : "[yellow]?[/]"),
                     new Markup($"[bold]{economics.TotalWatts:0}[/]"),
+                    new Markup(""),
                     new Markup($"[bold]{money.CompactMarkup(economics.CostPerDay)}[/]"),
                     new Markup(money.Signed(economics.TotalProfitPerDay)));
             }
@@ -277,9 +282,9 @@ public sealed class EconomicsScreen
                 new Markup(Economics.FormatHashrate(state.Hashrate)),
                 new Markup($"{share:P1}"),
                 new Markup($"{state.PowerWatts:0}"),
-                new Markup(state.Node.PricePerKwh is { } own
-                    ? $"{own:N2}"
-                    : $"[grey]{config.Electricity.PricePerKwh:N2}[/]"),
+                new Markup(config.OwnPricePerKwhFor(state.Node, state.Snapshot) is { } own
+                    ? $"{own:0.00##}"
+                    : $"[grey]{config.Electricity.PricePerKwh:0.00##}[/]"),
                 new Markup(money.Markup(node.CostPerDay)),
                 new Markup(money.Markup(node.TotalRevenuePerDay)),
                 new Markup(money.Signed(node.ProfitPerDay)));

@@ -27,6 +27,16 @@ public sealed class AgentClient : IDisposable
             _http.DefaultRequestHeaders.Add("X-Fleet-Token", token);
     }
 
+    public AgentClient(NodeConfig node, HttpMessageHandler handler)
+    {
+        Node = node;
+        _http = new HttpClient(handler)
+        {
+            BaseAddress = new Uri($"{node.Endpoint}/api/v1/"),
+            Timeout = TimeSpan.FromSeconds(8),
+        };
+    }
+
     public NodeConfig Node { get; }
 
     public Task<NodeSnapshotDto?> GetStatusAsync(CancellationToken ct) =>

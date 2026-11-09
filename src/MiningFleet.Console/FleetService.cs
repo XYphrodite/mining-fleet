@@ -1,3 +1,4 @@
+using System.Globalization;
 using MiningFleet.Contracts;
 
 namespace MiningFleet.Console;
@@ -292,6 +293,62 @@ public sealed class FleetService
         false => "stays idle at boot",
         null => "unset - follows the node's appsettings.json",
     };
+
+    /// <summary>
+    /// Reads, sets, or clears one node's electricity tariff on the agent, verifying the read-back
+    /// so an older agent that drops <see cref="MinerConfigDto.PricePerKwh"/> is caught immediately.
+    /// </summary>
+    public static Func<AgentClient, CancellationToken, Task<CommandResultDto?>> TariffAction(
+        double? set,
+        bool clear,
+        string currency,
+        double fleetDefault) =>
+        async (client, token) =>
+        {
+            if (clear)
+            {
+                var cleared = await client.PutConfigAsync(new MinerConfigDto { ClearPricePerKwh = true }, token);
+                if (cleared is null) return CommandResultDto.Failure("empty response");
+                return cleared.PricePerKwh is null
+                    ? CommandResultDto.Success(string.Create(CultureInfo.InvariantCulture, $"cleared - uses fleet default ({fleetDefault:0.00##} {currency}/kWh)"))
+                    : CommandResultDto.Failure("this agent did not clear its tariff; run upgrade-agents");
+            }
+
+            if (set is not { } wanted)
+            {
+                var current = await client.GetConfigAsync(token);
+                return current is null
+                    ? CommandResultDto.Failure("empty response")
+                    : CommandResultDto.Success(DescribeTariff(current.PricePerKwh, currency, fleetDefault));
+            }
+
+            var saved = await client.PutConfigAsync(new MinerConfigDto { PricePerKwh = wanted }, token);
+            if (saved is null) return CommandResultDto.Failure("empty response");
+
+            return saved.PricePerKwh is { } actual && Math.Abs(actual - wanted) < 1e-6
+                ? CommandResultDto.Success(DescribeTariff(actual, currency, fleetDefault))
+                : CommandResultDto.Failure("this agent is too old to store a tariff; run upgrade-agents");
+        };
+
+    /// <summary>
+    /// Pushes local <see cref="NodeConfig.PricePerKwh"/> overrides from <c>fleet.json</c> onto the
+    /// agents themselves so every console querying those nodes sees the same tariff.
+    /// </summary>
+    public Task<IReadOnlyList<(NodeConfig Node, CommandResultDto Result)>> SyncTariffsAsync(
+        IEnumerable<NodeConfig> nodes,
+        CancellationToken ct) =>
+        ForEachAsync(nodes, (node, client, token) =>
+        {
+            var currency = _config.Electricity.Currency;
+            var def = _config.Electricity.PricePerKwh;
+            var own = node.PricePerKwh is { } v && double.IsFinite(v) && v >= 0 ? v : (double?)null;
+            return TariffAction(own, false, currency, def)(client, token);
+        }, ct);
+
+    public static string DescribeTariff(double? pricePerKwh, string currency, double fleetDefault) =>
+        pricePerKwh is { } v && double.IsFinite(v) && v >= 0
+            ? string.Create(CultureInfo.InvariantCulture, $"{v:0.00##} {currency}/kWh stored on agent")
+            : string.Create(CultureInfo.InvariantCulture, $"unset on agent - uses fleet default ({fleetDefault:0.00##} {currency}/kWh)");
 
     private static string Describe(ThrottleSettingsDto settings)
     {

@@ -221,7 +221,7 @@ public static class Economics
     }
 
     public static double DailyCost(NodeState node, FleetConfig config) =>
-        node.PowerWatts / 1000.0 * 24.0 * config.PricePerKwhFor(node.Node);
+        node.PowerWatts / 1000.0 * 24.0 * config.PricePerKwhFor(node);
 
     public static string FormatHashrate(double hashesPerSecond) => hashesPerSecond switch
     {

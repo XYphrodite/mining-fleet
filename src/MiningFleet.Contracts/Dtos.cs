@@ -112,6 +112,12 @@ public sealed record NodeSnapshotDto(AgentInfoDto Agent, MinerStatusDto Miner, H
 
     /// <summary>Cumulative work and energy recorded on disk by this agent; null on older agents.</summary>
     public NodeLifetimeDto? Lifetime { get; init; }
+
+    /// <summary>
+    /// Electricity tariff stored on this node (price per kWh in the fleet's currency), or null when
+    /// no node-specific tariff has been stored on the agent.
+    /// </summary>
+    public double? PricePerKwh { get; init; }
 }
 
 /// <summary>
@@ -174,6 +180,19 @@ public sealed record MinerConfigDto
     public string[]? ExtraArgs { get; init; }
     /// <summary>Watts to assume for this machine when no power sensor is available.</summary>
     public double? PowerFallbackWatts { get; init; }
+
+    /// <summary>
+    /// Electricity tariff stored on this node (price per kWh). Stored in <c>miner.json</c> on the
+    /// agent so every console querying this machine sees the same tariff without keeping local
+    /// <c>fleet.json</c> copies in sync. Null in a partial push leaves the stored tariff untouched.
+    /// </summary>
+    public double? PricePerKwh { get; init; }
+
+    /// <summary>
+    /// Clears <see cref="PricePerKwh"/> back to null (reverting to the fleet default) without
+    /// changing how null fields behave in a partial config update.
+    /// </summary>
+    public bool? ClearPricePerKwh { get; init; }
 
     /// <summary>
     /// Keep a monitor window - Resource Monitor by preference - running hidden in the node's
