@@ -132,13 +132,34 @@ if ([string]::IsNullOrWhiteSpace($SourcePath)) {
     $assetNames = $agentAssetNames
 
     Write-Host "==> Fetching agent from the newest release of $repo"
-    $release = Invoke-RestMethod "https://api.github.com/repos/$repo/releases/latest" -Headers @{ 'User-Agent' = 'mining-fleet-agent-installer' } -TimeoutSec 30
-    $asset = $null
-    foreach ($assetName in $assetNames) {
-        $asset = $release.assets | Where-Object { $_.name -eq $assetName } | Select-Object -First 1
-        if ($asset) { break }
+    $release = $null
+    $apiError = $null
+    try {
+        $release = Invoke-RestMethod "https://api.github.com/repos/$repo/releases/latest" -Headers @{ 'User-Agent' = 'mining-fleet-agent-installer' } -TimeoutSec 30
+    } catch {
+        $apiError = $_.Exception.Message
     }
-    if (-not $asset) { throw "Release $($release.tag_name) carries no $($assetNames -join ' or ')." }
+    $asset = $null
+    if ($release) {
+        foreach ($assetName in $assetNames) {
+            $asset = $release.assets | Where-Object { $_.name -eq $assetName } | Select-Object -First 1
+            if ($asset) { break }
+        }
+        if (-not $asset) { throw "Release $($release.tag_name) carries no $($assetNames -join ' or ')." }
+    } else {
+        # api.github.com is blocked or throttled on some networks while github.com works.
+        Write-Host "    GitHub API unreachable ($apiError); trying direct download links" -ForegroundColor Yellow
+        foreach ($assetName in $assetNames) {
+            $url = "https://github.com/$repo/releases/latest/download/$assetName"
+            try {
+                Invoke-WebRequest -Uri $url -Method Head -UseBasicParsing -TimeoutSec 30 -Headers @{ 'User-Agent' = 'mining-fleet-agent-installer' } | Out-Null
+                $asset = [pscustomobject]@{ name = $assetName; browser_download_url = $url }
+                $release = [pscustomobject]@{ tag_name = 'latest' }
+                break
+            } catch { }
+        }
+        if (-not $asset) { throw "Could not read releases of $repo, and the direct download links failed too. ($apiError)" }
+    }
 
     $archive = Join-Path ([IO.Path]::GetTempPath()) "mining-fleet-agent-$([guid]::NewGuid().ToString('N')).zip"
     $SourcePath = Join-Path ([IO.Path]::GetTempPath()) "mining-fleet-agent-$([guid]::NewGuid().ToString('N'))"

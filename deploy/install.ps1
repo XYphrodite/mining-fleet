@@ -111,20 +111,42 @@ Write-Step "Looking up the newest release of $repo"
 $api = if ($version) { "https://api.github.com/repos/$repo/releases/tags/$version" }
        else          { "https://api.github.com/repos/$repo/releases/latest" }
 
+$release = $null
+$apiError = $null
 try {
     $release = Invoke-RestMethod -Uri $api -Headers @{ 'User-Agent' = 'mining-fleet-installer' } -TimeoutSec 30
 } catch {
-    throw "Could not read releases of $repo. Is the repository published and does it have a release? ($($_.Exception.Message))"
+    $apiError = $_.Exception.Message
 }
 
 $asset = $null
-foreach ($assetName in $assetNames) {
-    $asset = $release.assets | Where-Object { $_.name -eq $assetName } | Select-Object -First 1
-    if ($asset) { break }
-}
-if (-not $asset) {
-    $available = ($release.assets | ForEach-Object { $_.name }) -join ', '
-    throw "Release $($release.tag_name) carries no $($assetNames -join ' or '). Available: $available"
+if ($release) {
+    foreach ($assetName in $assetNames) {
+        $asset = $release.assets | Where-Object { $_.name -eq $assetName } | Select-Object -First 1
+        if ($asset) { break }
+    }
+    if (-not $asset) {
+        $available = ($release.assets | ForEach-Object { $_.name }) -join ', '
+        throw "Release $($release.tag_name) carries no $($assetNames -join ' or '). Available: $available"
+    }
+} else {
+    # api.github.com is blocked or throttled on some networks while github.com itself works.
+    # The plain download URLs need no API call, so probe those before giving up.
+    Write-Host "    GitHub API unreachable ($apiError); trying direct download links" -ForegroundColor Yellow
+    $base = if ($version) { "https://github.com/$repo/releases/download/$version" }
+            else          { "https://github.com/$repo/releases/latest/download" }
+    foreach ($assetName in $assetNames) {
+        $url = "$base/$assetName"
+        try {
+            Invoke-WebRequest -Uri $url -Method Head -UseBasicParsing -TimeoutSec 30 -Headers @{ 'User-Agent' = 'mining-fleet-installer' } | Out-Null
+            $asset = [pscustomobject]@{ name = $assetName; size = 0; browser_download_url = $url }
+            $release = [pscustomobject]@{ tag_name = if ($version) { $version } else { 'latest' } }
+            break
+        } catch { }
+    }
+    if (-not $asset) {
+        throw "Could not read releases of $repo, and the direct download links failed too. Is the repository published and does it have a release? ($apiError)"
+    }
 }
 
 Write-Host "    $($release.tag_name) - $($asset.name) ($([math]::Round($asset.size / 1MB, 1)) MB)"
