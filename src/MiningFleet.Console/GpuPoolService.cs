@@ -303,6 +303,64 @@ public sealed class GpuPoolService : IDisposable
         return new GpuPoolRate(coin, ticker, net, fee);
     }
 
+    public static double DefaultPoolFee(string coin) =>
+        string.Equals(coin, "xtm-c29", StringComparison.OrdinalIgnoreCase) ? 0.01 : 0.03;
+
+    /// <summary>
+    /// Builds a fallback <see cref="GpuPoolRate"/> from Kryptex's public <c>/api/v1/coin/{coin}/info</c>
+    /// and <c>/api/v1/net/stats/{coin}</c> feeds when <c>/{coin}/api/v1/pool/stats</c> returns 5xx.
+    /// </summary>
+    public static GpuPoolRate? ParseNetworkFallbackPoolRate(string coin, JsonElement coinInfo, JsonElement netStats)
+    {
+        if (string.IsNullOrWhiteSpace(coin)
+            || coinInfo.ValueKind != JsonValueKind.Object
+            || netStats.ValueKind != JsonValueKind.Object)
+            return null;
+
+        var blockTime = Number(coinInfo, "block_time");
+        var blockReward = Number(coinInfo, "block_reward");
+        var netHashrate = LatestNetHashrate(netStats);
+        if (blockTime is not > 0 || !double.IsFinite(blockTime.Value)
+            || blockReward is not > 0 || !double.IsFinite(blockReward.Value)
+            || netHashrate is not > 0 || !double.IsFinite(netHashrate.Value))
+            return null;
+
+        var fee = DefaultPoolFee(coin.Trim());
+        var net = (86400.0 / blockTime.Value * blockReward.Value / netHashrate.Value) * (1.0 - fee);
+        if (net <= 0 || !double.IsFinite(net)) return null;
+
+        var slug = coin.Trim().ToLowerInvariant();
+        var ticker = slug.Split('-')[0].ToUpperInvariant();
+        return new GpuPoolRate(slug, ticker, net, fee);
+    }
+
+    private static double? LatestNetHashrate(JsonElement netStats)
+    {
+        foreach (var seriesName in new[] { "day", "week" })
+        {
+            if (!netStats.TryGetProperty(seriesName, out var series) || series.ValueKind != JsonValueKind.Array)
+                continue;
+
+            double? bestRate = null;
+            long bestTimestamp = long.MinValue;
+            foreach (var item in series.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object) continue;
+                var netHr = Number(item, "net_hashrate");
+                if (netHr is not > 0 || !double.IsFinite(netHr.Value)) continue;
+                var ts = (long)(Number(item, "timestamp") ?? 0);
+                if (bestRate is null || ts >= bestTimestamp)
+                {
+                    bestTimestamp = ts;
+                    bestRate = netHr.Value;
+                }
+            }
+            if (bestRate is not null)
+                return bestRate;
+        }
+        return null;
+    }
+
     public async Task<GpuPoolRate?> GetPoolRateAsync(string coin, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(coin)) return null;
@@ -314,6 +372,15 @@ public sealed class GpuPoolService : IDisposable
 
         var json = await ReadJsonAsync($"https://pool.kryptex.com/{slug}/api/v1/pool/stats", ct);
         var rate = json is { } root ? ParsePoolRate(slug, root) : null;
+
+        if (rate is null)
+        {
+            var infoTask = ReadJsonAsync($"https://pool.kryptex.com/api/v1/coin/{slug}/info", ct);
+            var netTask = ReadJsonAsync($"https://pool.kryptex.com/api/v1/net/stats/{slug}", ct);
+            await Task.WhenAll(infoTask, netTask);
+            if (infoTask.Result is { } info && netTask.Result is { } net)
+                rate = ParseNetworkFallbackPoolRate(slug, info, net);
+        }
 
         if (rate is null && cached.Rate is not null) return cached.Rate;
 

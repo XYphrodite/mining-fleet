@@ -266,6 +266,29 @@ public sealed class CombinedNodeIncomeTests
         Assert.Contains(rigBTotal, econConsole.Output);
     }
 
+    [Fact]
+    public async Task Pool_rate_falls_back_to_coin_info_and_net_stats_when_pool_stats_returns_500()
+    {
+        using var service = new GpuPoolService(new StubHandler(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("pool.kryptex.com/prl/api/v1/pool/stats"))
+                return new HttpResponseMessage(HttpStatusCode.InternalServerError);
+            if (url.Contains("pool.kryptex.com/api/v1/coin/prl/info"))
+                return Json("""{"algo":"PearlHash","block_time":184.0,"block_reward":2172.3978357111}""");
+            if (url.Contains("pool.kryptex.com/api/v1/net/stats/prl"))
+                return Json("""{"day":[{"timestamp":1794558600000,"net_hashrate":9.0e19},{"timestamp":1794562200000,"net_hashrate":9.361963064108612e19}]}""");
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        }));
+
+        var rate = await service.GetPoolRateAsync("prl", CancellationToken.None);
+
+        Assert.NotNull(rate);
+        Assert.Equal("PRL", rate!.Ticker);
+        var expected = 86400.0 / 184.0 * 2172.3978357111 / 9.361963064108612e19 * 0.97;
+        Assert.Equal(expected * 1e14, rate.CoinsPerHashrateDay * 1e14, precision: 8);
+    }
+
     private static HttpResponseMessage Json(string body) => new(HttpStatusCode.OK)
     {
         Content = new StringContent(body, Encoding.UTF8, "application/json"),
