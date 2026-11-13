@@ -101,6 +101,39 @@ public sealed class AgentClient : IDisposable
         return await response.Content.ReadFromJsonAsync<MinerConfigDto>(JsonOptions, ct);
     }
 
+    /// <summary>
+    /// Checks whether the agent supports <c>fleet.json</c> sync and returns its metadata.
+    /// Distinguishes an old agent (404 NotFound) from a sync-capable agent that has not
+    /// received a <c>fleet.json</c> yet (204 NoContent).
+    /// </summary>
+    public async Task<(bool Supported, FleetConfigMetaDto? Meta)> GetFleetConfigMetaAsync(CancellationToken ct)
+    {
+        using var response = await _http.GetAsync("fleet-config/meta", ct);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return (false, null);
+        if (response.StatusCode == System.Net.HttpStatusCode.NoContent) return (true, null);
+        response.EnsureSuccessStatusCode();
+        var meta = await response.Content.ReadFromJsonAsync<FleetConfigMetaDto>(JsonOptions, ct);
+        return (true, meta);
+    }
+
+    public async Task<FleetConfigSyncDto?> GetFleetConfigAsync(CancellationToken ct)
+    {
+        using var response = await _http.GetAsync("fleet-config", ct);
+        if (response.StatusCode is System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.NoContent)
+            return null;
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<FleetConfigSyncDto>(JsonOptions, ct);
+    }
+
+    public async Task<FleetConfigPushResultDto?> PutFleetConfigAsync(FleetConfigSyncDto payload, CancellationToken ct)
+    {
+        using var response = await _http.PutAsJsonAsync("fleet-config", payload, JsonOptions, ct);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return null;
+        if (!response.IsSuccessStatusCode && response.StatusCode != System.Net.HttpStatusCode.BadRequest)
+            response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<FleetConfigPushResultDto>(JsonOptions, ct);
+    }
+
     /// <summary>Downloads and unpacks xmrig on the node. Slow, so it gets its own long timeout.</summary>
     public async Task<InstallResultDto?> InstallAsync(InstallRequestDto request, CancellationToken ct)
     {

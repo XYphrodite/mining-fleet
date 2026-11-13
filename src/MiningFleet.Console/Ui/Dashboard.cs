@@ -87,6 +87,7 @@ public sealed class Dashboard : IDisposable
                 Task<MarketSnapshot?>? marketTask = null;
                 Task<IReadOnlyDictionary<string, NodeGpuQuote>?>? fastQuotesTask = null;
                 Task<PoolPanelsSnapshot?>? poolTask = null;
+                Task? fleetSyncTask = null;
 
                 // Kick off coin yields & prices immediately from known config/ledger slugs so GPU
                 // daily and lifetime RUB figures do not wait for offline nodes or /config round-trips.
@@ -188,9 +189,16 @@ public sealed class Dashboard : IDisposable
                             poolTask = FetchPoolPanelsSafeAsync(states.ToArray(), liveCt);
                         }
 
+                        fleetSyncTask ??= SyncFleetFromSnapshotsSafeAsync(states.ToArray(), liveCt);
+
                         var nextWaveAt = DateTime.UtcNow + interval;
                         while (DateTime.UtcNow < nextWaveAt)
                         {
+                            if (fleetSyncTask is { IsCompleted: true })
+                            {
+                                await fleetSyncTask;
+                                fleetSyncTask = null;
+                            }
                             var completed = await WaitNextCompletionOrKeyAsync(
                                 [], marketTask, fastQuotesTask, poolTask,
                                 nextWaveAt,
@@ -300,6 +308,20 @@ public sealed class Dashboard : IDisposable
 
     private async Task<(int Index, NodeState State)> PollIndexedAsync(int index, NodeConfig node, CancellationToken ct) =>
         (index, await _fleet.PollNodeAsync(node, ct, NodePollTimeout));
+
+    private async Task SyncFleetFromSnapshotsSafeAsync(IReadOnlyList<NodeState> states, CancellationToken ct)
+    {
+        try
+        {
+            await _fleet.ObserveSnapshotsForSyncAsync(states, ct);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception)
+        {
+        }
+    }
 
     private async Task<MarketSnapshot?> FetchMarketSafeAsync(CancellationToken ct)
     {

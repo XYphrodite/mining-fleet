@@ -40,6 +40,8 @@ public sealed class AgentUpdateService
         "xmrig-api.token",
         "miner.json",
         LifetimeTracker.FileName,
+        FleetConfigSync.FleetConfigFileName,
+        FleetConfigSync.SyncMetadataFileName,
     ];
 
     /// <summary>Exposed so a test can assert the list still covers everything that identifies a node.</summary>

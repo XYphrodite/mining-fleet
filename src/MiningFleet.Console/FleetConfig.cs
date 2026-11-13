@@ -78,6 +78,13 @@ public sealed class FleetConfig
     [JsonIgnore]
     public string Path { get; private set; } = "";
 
+    [JsonIgnore]
+    public FleetConfigMetaDto? SyncMeta { get; private set; }
+
+    public event Action? Saved;
+
+    private readonly object _syncGate = new();
+
     public static string DefaultPath =>
         FirstEnvironmentVariable("MINING_FLEET_CONFIG", "XMRIG_FLEET_CONFIG")
         ?? System.IO.Path.Combine(AppContext.BaseDirectory, "fleet.json");
@@ -105,16 +112,21 @@ public sealed class FleetConfig
     {
         path ??= DefaultPath;
         FleetConfig config;
+        FleetConfigMetaDto? meta = null;
         if (File.Exists(path))
         {
+            var raw = File.ReadAllText(path);
             try
             {
-                config = JsonSerializer.Deserialize<FleetConfig>(File.ReadAllText(path), JsonOptions) ?? new FleetConfig();
+                config = JsonSerializer.Deserialize<FleetConfig>(raw, JsonOptions) ?? new FleetConfig();
             }
             catch (JsonException ex)
             {
                 throw new InvalidOperationException($"{path} is not valid JSON: {ex.Message}", ex);
             }
+
+            var mtime = new DateTimeOffset(File.GetLastWriteTimeUtc(path), TimeSpan.Zero);
+            meta = new FleetConfigMetaDto(mtime, FleetConfigSync.ComputeSha256(raw), Environment.MachineName);
         }
         else
         {
@@ -122,14 +134,163 @@ public sealed class FleetConfig
         }
 
         config.Path = path;
+        config.SyncMeta = meta;
         return config;
     }
 
     public void Save()
     {
         var path = string.IsNullOrEmpty(Path) ? DefaultPath : Path;
-        File.WriteAllText(path, JsonSerializer.Serialize(this, JsonOptions));
-        Path = path;
+        var json = JsonSerializer.Serialize(this, JsonOptions);
+        var sha = FleetConfigSync.ComputeSha256(json);
+        DateTimeOffset updatedAt;
+
+        lock (_syncGate)
+        {
+            var now = DateTimeOffset.UtcNow;
+            updatedAt = SyncMeta is { } prev && now <= prev.UpdatedAtUtc
+                ? prev.UpdatedAtUtc.AddMilliseconds(1)
+                : now;
+
+            FleetConfigSync.WriteFileAtomic(path, json, updatedAt);
+            Path = path;
+            SyncMeta = new FleetConfigMetaDto(updatedAt, sha, Environment.MachineName);
+        }
+
+        Saved?.Invoke();
+    }
+
+    /// <summary>
+    /// Reloads <c>fleet.json</c> if the file on disk was edited outside this process (for example
+    /// in a text editor or by the local agent sync service) after the last load/save.
+    /// </summary>
+    public bool RefreshFromDiskIfChanged()
+    {
+        var path = string.IsNullOrEmpty(Path) ? DefaultPath : Path;
+        if (!File.Exists(path)) return false;
+
+        lock (_syncGate)
+        {
+            string raw;
+            DateTimeOffset mtime;
+            try
+            {
+                raw = File.ReadAllText(path);
+                mtime = new DateTimeOffset(File.GetLastWriteTimeUtc(path), TimeSpan.Zero);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return false;
+            }
+
+            var sha = FleetConfigSync.ComputeSha256(raw);
+            if (SyncMeta is { } prev && string.Equals(prev.Sha256, sha, StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            if (!FleetConfigSync.TryValidateJson(raw, out _)) return false;
+
+            var effectiveTime = SyncMeta is { } previous && mtime <= previous.UpdatedAtUtc
+                ? previous.UpdatedAtUtc.AddMilliseconds(1)
+                : mtime;
+
+            if (!TryApplyJsonLocked(raw)) return false;
+            SyncMeta = new FleetConfigMetaDto(effectiveTime, sha, Environment.MachineName);
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Applies a newer <c>fleet.json</c> received from a peer node, updating both the file on
+    /// disk (preserving the peer's timestamp so it is not re-flagged as a new edit) and the
+    /// live in-memory configuration.
+    /// </summary>
+    public bool ApplySynced(string json, DateTimeOffset updatedAtUtc, string? originHost = null)
+    {
+        if (!FleetConfigSync.TryValidateJson(json, out _)) return false;
+
+        lock (_syncGate)
+        {
+            if (!TryApplyJsonLocked(json)) return false;
+
+            var path = string.IsNullOrEmpty(Path) ? DefaultPath : Path;
+            var sha = FleetConfigSync.ComputeSha256(json);
+            if (!string.IsNullOrEmpty(path))
+            {
+                FleetConfigSync.WriteFileAtomic(path, json, updatedAtUtc);
+                Path = path;
+            }
+
+            SyncMeta = new FleetConfigMetaDto(updatedAtUtc, sha, originHost);
+            return true;
+        }
+    }
+
+    /// <summary>Builds the sync envelope for the current <c>fleet.json</c>.</summary>
+    public FleetConfigSyncDto ToSyncEnvelope()
+    {
+        lock (_syncGate)
+        {
+            var path = string.IsNullOrEmpty(Path) ? DefaultPath : Path;
+            string json;
+            if (!string.IsNullOrEmpty(path) && File.Exists(path))
+            {
+                json = File.ReadAllText(path);
+            }
+            else
+            {
+                json = JsonSerializer.Serialize(this, JsonOptions);
+            }
+
+            var sha = FleetConfigSync.ComputeSha256(json);
+            var meta = SyncMeta;
+            var updatedAt = meta is not null && string.Equals(meta.Sha256, sha, StringComparison.OrdinalIgnoreCase)
+                ? meta.UpdatedAtUtc
+                : (!string.IsNullOrEmpty(path) && File.Exists(path)
+                    ? new DateTimeOffset(File.GetLastWriteTimeUtc(path), TimeSpan.Zero)
+                    : DateTimeOffset.UtcNow);
+
+            SyncMeta = new FleetConfigMetaDto(updatedAt, sha, meta?.OriginHost ?? Environment.MachineName);
+            return new FleetConfigSyncDto
+            {
+                UpdatedAtUtc = updatedAt,
+                Sha256 = sha,
+                Json = json,
+                OriginHost = SyncMeta.OriginHost,
+            };
+        }
+    }
+
+    private bool TryApplyJsonLocked(string json)
+    {
+        FleetConfig? loaded;
+        try
+        {
+            loaded = JsonSerializer.Deserialize<FleetConfig>(json, JsonOptions);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+
+        if (loaded is null) return false;
+
+        Token = loaded.Token;
+        AgentPort = loaded.AgentPort;
+        PollIntervalSeconds = loaded.PollIntervalSeconds;
+        Electricity = loaded.Electricity;
+        Pool = loaded.Pool;
+        PriceApiUrl = loaded.PriceApiUrl;
+        Update = loaded.Update;
+        Throttle = loaded.Throttle;
+        ReservedCores = loaded.ReservedCores;
+        MaxCpuPercent = loaded.MaxCpuPercent;
+        MaxCpuTemperatureC = loaded.MaxCpuTemperatureC;
+        PauseWhile = loaded.PauseWhile;
+        ThrottleWhile = loaded.ThrottleWhile;
+        GpuMiner = loaded.GpuMiner;
+        GpuProfiles = loaded.GpuProfiles;
+        Nodes = loaded.Nodes;
+        return true;
     }
 
     public NodeConfig? FindNode(string name) =>

@@ -35,9 +35,24 @@ System.Console.CancelKeyPress += (_, e) =>
 var fleet = new FleetService(config);
 using var market = new MarketService(config);
 
+Task pendingFleetPush = Task.CompletedTask;
+var pushLock = new object();
+config.Saved += () =>
+{
+    lock (pushLock)
+    {
+        var previous = pendingFleetPush;
+        pendingFleetPush = PushSavedConfigAsync(previous, fleet);
+    }
+};
+
 // One-shot mode for scripts and scheduled tasks.
 if (args.Length > 0)
-    return await Cli.RunAsync(args, config, fleet, market, cts.Token);
+{
+    var exitCode = await Cli.RunAsync(args, config, fleet, market, cts.Token);
+    await FlushPendingPushAsync(pendingFleetPush);
+    return exitCode;
+}
 
 // First interactive run: leave a config on disk so the file can be edited by hand too.
 if (!File.Exists(config.Path)) config.Save();
@@ -62,6 +77,7 @@ var settings = new SettingsScreen(config);
 var consoleVersion = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "0.0.0";
 
 var updateBannerTask = Updater.GetOutdatedBannerAsync(config, cts.Token);
+var initialSyncTask = SafeSyncOnStartupAsync(fleet, cts.Token);
 
 try
 {
@@ -72,6 +88,8 @@ try
         AnsiConsole.MarkupLine($"[dim]v{Markup.Escape(consoleVersion)}[/]");
         if (updateBannerTask.IsCompletedSuccessfully && updateBannerTask.Result is { Length: > 0 } updateBanner)
             AnsiConsole.MarkupLine(updateBanner);
+        if (initialSyncTask.IsCompletedSuccessfully && initialSyncTask.Result?.PulledFrom is { Length: > 0 } syncedFrom)
+            AnsiConsole.MarkupLine($"[green]Synced newer fleet.json from {UiHelpers.Escape(syncedFrom)}[/]");
         AnsiConsole.MarkupLine(
             $"[grey]{config.Nodes.Count(n => n.Enabled)} enabled node(s)  |  pool {Markup.Escape(config.Pool.Url)}  |  {Markup.Escape(config.Path)}[/]");
         if (string.IsNullOrWhiteSpace(config.Token))
@@ -112,7 +130,44 @@ catch (OperationCanceledException)
 }
 finally
 {
+    await FlushPendingPushAsync(pendingFleetPush);
     AnsiConsole.Clear();
+}
+
+static async Task<FleetConfigSyncReport?> SafeSyncOnStartupAsync(FleetService fleet, CancellationToken ct)
+{
+    try
+    {
+        return await fleet.SyncFleetConfigAsync(forcePushLocal: false, ct, TimeSpan.FromSeconds(3));
+    }
+    catch (Exception)
+    {
+        return null;
+    }
+}
+
+static async Task PushSavedConfigAsync(Task previous, FleetService fleet)
+{
+    try { await previous; } catch { }
+    try
+    {
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(4));
+        await fleet.SyncFleetConfigAsync(forcePushLocal: false, timeoutCts.Token, TimeSpan.FromSeconds(3));
+    }
+    catch (Exception)
+    {
+    }
+}
+
+static async Task FlushPendingPushAsync(Task pending)
+{
+    try
+    {
+        await pending.WaitAsync(TimeSpan.FromSeconds(2));
+    }
+    catch (Exception)
+    {
+    }
 }
 
 static async Task UpdateAgentsFromPanelAsync(FleetConfig cfg, FleetService flt, CancellationToken ct)

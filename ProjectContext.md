@@ -803,6 +803,17 @@ mining-fleet/
 
 ### Implemented, Not Yet Verified Live ⏳
 
+- [ ] **Peer-to-peer `fleet.json` synchronization across agents and consoles (2026-11-13).**
+      Agents now expose `/api/v1/fleet-config/meta`, `/api/v1/fleet-config` (`GET`/`PUT`), and
+      optional `NodeSnapshotDto.FleetConfig` metadata in `/api/v1/status`, backed by
+      `FleetConfigSyncStore` (agent copy + `fleet.sync.json` sidecar + local console
+      `fleet.json` discovery/mirroring under `Users\*\AppData\Local\Programs\{mining,xmrig}-fleet`)
+      and `FleetConfigSyncService` (periodic 60s peer polling plus immediate fan-out when a
+      newer `fleet.json` arrives or is edited locally). Consoles sync at startup, push on
+      `FleetConfig.Save()`, reconcile automatically during `Dashboard` polling, and expose
+      `mining-fleet sync [--push]`. Verified in unit tests (`FleetConfigSyncTests`, 372/372
+      tests passing); not yet deployed or verified live across tailnet nodes.
+
 - [x] **XTM fiat value on Dashboard and LuckyPool C29 on Economics screen (2026-10-22).**
       `XtmIncomePanel` now includes a `Value / next 24h` column in `RUB (USD)` using CoinGecko
       `minotari` via `GpuPoolService`, matching `GpuIncomePanel`. `EconomicsScreen` (`ShowCardsAsync`)
@@ -1119,7 +1130,7 @@ mining-fleet/
 ## Document Information
 
 **Document Version**: v1.2
-**Last Updated**: 2026-10-22
+**Last Updated**: 2026-11-13
 **Product Version**: 1.17.31
 **Status**: Active
 **Repository**: `c:\Repos\xmrig-fleet` (local folder; branch `master`), published at

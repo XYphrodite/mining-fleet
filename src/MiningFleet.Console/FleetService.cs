@@ -48,17 +48,33 @@ public sealed record NodeState(
     public double GpuHashrate => Snapshot?.GpuMiner?.Hashrate ?? 0;
 }
 
+public sealed record FleetConfigSyncReport(
+    string? PulledFrom,
+    IReadOnlyList<string> PushedTo,
+    IReadOnlyList<string> UpToDate,
+    IReadOnlyList<string> Unsupported,
+    IReadOnlyList<string> Offline)
+{
+    public bool AnyChanged => PulledFrom is not null || PushedTo.Count > 0;
+}
+
 /// <summary>Fans requests out to every enabled node and keeps the latest answer for each.</summary>
 public sealed class FleetService
 {
     private readonly FleetConfig _config;
+    private readonly Func<NodeConfig, TimeSpan?, AgentClient>? _clientFactory;
+    private readonly SemaphoreSlim _fleetSyncLock = new(1, 1);
 
-    public FleetService(FleetConfig config) => _config = config;
+    public FleetService(FleetConfig config, Func<NodeConfig, TimeSpan?, AgentClient>? clientFactory = null)
+    {
+        _config = config;
+        _clientFactory = clientFactory;
+    }
 
     public IReadOnlyList<NodeConfig> EnabledNodes => _config.Nodes.Where(n => n.Enabled).ToList();
 
     public AgentClient CreateClient(NodeConfig node, TimeSpan? timeout = null) =>
-        new(node, _config.TokenFor(node), timeout);
+        _clientFactory?.Invoke(node, timeout) ?? new AgentClient(node, _config.TokenFor(node), timeout);
 
     public async Task<IReadOnlyList<NodeState>> PollAsync(CancellationToken ct, TimeSpan? timeout = null)
     {
@@ -358,6 +374,179 @@ public sealed class FleetService
         var floor = settings.FloorLevel ?? 0;
         var ramp = settings.RampUpSeconds ?? 120;
         return $"throttling on, floor {floor}%, back up after {ramp}s of quiet";
+    }
+
+    /// <summary>
+    /// Asks every reachable enabled agent whose <c>fleet.json</c> is newer, pulls the newest
+    /// copy onto this console when a peer is ahead, and pushes the newest copy to any node that
+    /// is behind or has none yet.
+    /// </summary>
+    public async Task<FleetConfigSyncReport> SyncFleetConfigAsync(
+        bool forcePushLocal = false,
+        CancellationToken ct = default,
+        TimeSpan? timeout = null)
+    {
+        await _fleetSyncLock.WaitAsync(ct);
+        try
+        {
+            _config.RefreshFromDiskIfChanged();
+            var nodes = EnabledNodes;
+            if (nodes.Count == 0)
+                return new FleetConfigSyncReport(null, [], [], [], []);
+
+            var probeTimeout = timeout ?? TimeSpan.FromSeconds(4);
+            var probes = await Task.WhenAll(nodes.Select(async node =>
+            {
+                using var client = CreateClient(node, probeTimeout);
+                try
+                {
+                    var (supported, meta) = await client.GetFleetConfigMetaAsync(ct);
+                    return (Node: node, Online: true, Supported: supported, Meta: meta);
+                }
+                catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException)
+                {
+                    return (Node: node, Online: false, Supported: false, Meta: (FleetConfigMetaDto?)null);
+                }
+            }));
+
+            string? pulledFrom = null;
+            if (!forcePushLocal)
+            {
+                var newerCandidates = probes
+                    .Where(p => p.Online && p.Supported && p.Meta is not null && FleetConfigSync.IsNewer(p.Meta, _config.SyncMeta))
+                    .OrderByDescending(p => p.Meta!.UpdatedAtUtc)
+                    .ThenByDescending(p => p.Meta!.Sha256, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                foreach (var winner in newerCandidates)
+                {
+                    using var client = CreateClient(winner.Node, probeTimeout);
+                    try
+                    {
+                        var remote = await client.GetFleetConfigAsync(ct);
+                        if (remote is not null && _config.ApplySynced(remote.Json, remote.UpdatedAtUtc, remote.OriginHost ?? winner.Node.Name))
+                        {
+                            pulledFrom = winner.Node.Name;
+                            break;
+                        }
+                    }
+                    catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException)
+                    {
+                    }
+                }
+            }
+
+            var envelope = _config.ToSyncEnvelope();
+            var currentMeta = new FleetConfigMetaDto(envelope.UpdatedAtUtc, envelope.Sha256, envelope.OriginHost);
+
+            var pushedTo = new List<string>();
+            var upToDate = new List<string>();
+            var unsupported = new List<string>();
+            var offline = new List<string>();
+
+            var probedByEndpoint = probes.ToDictionary(p => p.Node.Endpoint, StringComparer.OrdinalIgnoreCase);
+            var currentNodes = EnabledNodes;
+            var pushTargets = new List<NodeConfig>();
+
+            foreach (var node in currentNodes)
+            {
+                if (!probedByEndpoint.TryGetValue(node.Endpoint, out var probe))
+                {
+                    using var client = CreateClient(node, probeTimeout);
+                    try
+                    {
+                        var (supported, meta) = await client.GetFleetConfigMetaAsync(ct);
+                        probe = (node, true, supported, meta);
+                    }
+                    catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException)
+                    {
+                        probe = (node, false, false, null);
+                    }
+                }
+
+                if (!probe.Online)
+                {
+                    offline.Add(node.Name);
+                    continue;
+                }
+
+                if (!probe.Supported)
+                {
+                    unsupported.Add(node.Name);
+                    continue;
+                }
+
+                var shouldPush = probe.Meta is null
+                                 || FleetConfigSync.IsNewer(currentMeta, probe.Meta)
+                                 || (forcePushLocal && !string.Equals(probe.Meta.Sha256, currentMeta.Sha256, StringComparison.OrdinalIgnoreCase));
+
+                if (shouldPush)
+                    pushTargets.Add(node);
+                else
+                    upToDate.Add(node.Name);
+            }
+
+            if (pushTargets.Count > 0)
+            {
+                var pushResults = await Task.WhenAll(pushTargets.Select(async node =>
+                {
+                    using var client = CreateClient(node, probeTimeout);
+                    try
+                    {
+                        var res = await client.PutFleetConfigAsync(envelope, ct);
+                        return (Node: node, Result: res);
+                    }
+                    catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException)
+                    {
+                        return (Node: node, Result: (FleetConfigPushResultDto?)null);
+                    }
+                }));
+
+                foreach (var (node, result) in pushResults)
+                {
+                    if (result is { Accepted: true, Status: "updated" })
+                        pushedTo.Add(node.Name);
+                    else if (result is { Accepted: true, Status: "unchanged" })
+                        upToDate.Add(node.Name);
+                    else if (result is null)
+                        offline.Add(node.Name);
+                }
+            }
+
+            return new FleetConfigSyncReport(pulledFrom, pushedTo, upToDate, unsupported, offline);
+        }
+        finally
+        {
+            _fleetSyncLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Inspects <c>fleet.json</c> metadata already returned in <see cref="NodeSnapshotDto"/> during
+    /// dashboard polling and runs a full sync only when any machine is ahead or behind.
+    /// </summary>
+    public async Task<FleetConfigSyncReport?> ObserveSnapshotsForSyncAsync(IReadOnlyList<NodeState> states, CancellationToken ct)
+    {
+        var localEdited = _config.RefreshFromDiskIfChanged();
+        var localMeta = _config.SyncMeta;
+
+        var needsSync = localEdited;
+        if (!needsSync)
+        {
+            foreach (var state in states)
+            {
+                var remoteMeta = state.Snapshot?.FleetConfig;
+                if (remoteMeta is null) continue;
+                if (FleetConfigSync.IsNewer(remoteMeta, localMeta) || FleetConfigSync.IsNewer(localMeta, remoteMeta))
+                {
+                    needsSync = true;
+                    break;
+                }
+            }
+        }
+
+        if (!needsSync) return null;
+        return await SyncFleetConfigAsync(forcePushLocal: false, ct, TimeSpan.FromSeconds(4));
     }
 
     private static string Describe(Exception ex) => ex switch

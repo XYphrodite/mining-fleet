@@ -19,7 +19,7 @@ public static class FleetConsoleUpdate
     /// fleet configuration/token and local income ledgers.
     /// </summary>
     public static IReadOnlyList<string> ProtectedFileNames { get; } =
-        ["fleet.json", "gpu-income.json", LifetimeIncomeLedger.FileName];
+        ["fleet.json", FleetConfigSync.SyncMetadataFileName, "gpu-income.json", LifetimeIncomeLedger.FileName];
 
     /// <summary>
     /// Options for one variant. The default overload prefers <see cref="FleetVariant.Light"/>

@@ -167,6 +167,7 @@ public static class UpdateFiles
             "lifetime.json",
             "game-mining.json",
             "fleet.json",
+            "fleet.sync.json",
             "gpu-income.json",
             "lifetime-income.json",
             ReleaseAssets.VariantMarkerFileName,

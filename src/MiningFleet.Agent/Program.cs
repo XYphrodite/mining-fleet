@@ -67,6 +67,9 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<MinerWatchdogServi
 builder.Services.AddSingleton(new LifetimeTracker(basePath));
 builder.Services.AddSingleton<LifetimeTrackerService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<LifetimeTrackerService>());
+builder.Services.AddSingleton(sp => new FleetConfigSyncStore(basePath, log: sp.GetService<ILogger<FleetConfigSyncStore>>()));
+builder.Services.AddSingleton<FleetConfigSyncService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<FleetConfigSyncService>());
 builder.Services.AddHttpClient("github", client =>
 {
     // The GitHub API rejects requests without a User-Agent.
@@ -121,7 +124,7 @@ var api = app.MapGroup("/api/v1");
 
 api.MapGet("/info", () => Info());
 
-api.MapGet("/status", async (MinerService miner, HardwareService hw, ThrottleService throttle, SessionMonitorService monitor, GpuMinerService gpu, MinerWatchdogService watchdog, LifetimeTrackerService lifetime, MinerConfigStore store, IOptions<AgentOptions> opts, CancellationToken ct) =>
+api.MapGet("/status", async (MinerService miner, HardwareService hw, ThrottleService throttle, SessionMonitorService monitor, GpuMinerService gpu, MinerWatchdogService watchdog, LifetimeTrackerService lifetime, MinerConfigStore store, FleetConfigSyncStore fleetSync, IOptions<AgentOptions> opts, CancellationToken ct) =>
 {
     // Sensors and the two miner APIs are independent, so read them together. Both miner reads are
     // capped by their own three-second client timeout, so this stays inside the console's eight.
@@ -137,6 +140,7 @@ api.MapGet("/status", async (MinerService miner, HardwareService hw, ThrottleSer
         GameMining = GameMiningStatusReader.Read(basePath, DateTimeOffset.UtcNow),
         Lifetime = lifetime.Snapshot(),
         PricePerKwh = store.EffectivePricePerKwh(opts.Value.PricePerKwh),
+        FleetConfig = fleetSync.CurrentMeta,
     };
 });
 
@@ -195,6 +199,40 @@ api.MapGet("/gpu/logs", (GpuMinerService gpu) => new LogTailDto("lolminer", gpu.
 // and keeps hashing; the node's token files are deliberately left untouched.
 api.MapPost("/agent/update", (AgentUpdateRequestDto request, AgentUpdateService updater, CancellationToken ct) =>
     updater.UpdateAsync(request, ct));
+
+api.MapGet("/fleet-config/meta", (HttpContext http, FleetConfigSyncStore fleetSync, FleetConfigSyncService syncSvc) =>
+{
+    http.Response.Headers[FleetConfigSync.NodeIdHeader] = syncSvc.NodeInstanceId;
+    if (fleetSync.RefreshFromLocalFiles(out _))
+        syncSvc.TriggerFanOut();
+
+    return fleetSync.CurrentMeta is { } meta
+        ? Results.Ok(meta)
+        : Results.NoContent();
+});
+
+api.MapGet("/fleet-config", (HttpContext http, FleetConfigSyncStore fleetSync, FleetConfigSyncService syncSvc) =>
+{
+    http.Response.Headers[FleetConfigSync.NodeIdHeader] = syncSvc.NodeInstanceId;
+    if (fleetSync.RefreshFromLocalFiles(out _))
+        syncSvc.TriggerFanOut();
+
+    return fleetSync.GetCurrentSync() is { } sync
+        ? Results.Ok(sync)
+        : Results.NoContent();
+});
+
+api.MapPut("/fleet-config", (HttpContext http, FleetConfigSyncDto incoming, FleetConfigSyncStore fleetSync, FleetConfigSyncService syncSvc) =>
+{
+    http.Response.Headers[FleetConfigSync.NodeIdHeader] = syncSvc.NodeInstanceId;
+    var result = fleetSync.ApplyRemote(incoming);
+    if (result.Accepted && result.Status == "updated")
+        syncSvc.TriggerFanOut();
+
+    return result.Status == "invalid"
+        ? Results.BadRequest(result)
+        : Results.Ok(result);
+});
 
 app.Logger.LogInformation("mining-fleet agent {Version} listening on {Url}", agentVersion, options.ListenUrl);
 

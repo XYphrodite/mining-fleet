@@ -118,6 +118,12 @@ public sealed record NodeSnapshotDto(AgentInfoDto Agent, MinerStatusDto Miner, H
     /// no node-specific tariff has been stored on the agent.
     /// </summary>
     public double? PricePerKwh { get; init; }
+
+    /// <summary>
+    /// Metadata for the newest <c>fleet.json</c> held by this agent, or null on older agents
+    /// (and agents that have not received one yet).
+    /// </summary>
+    public FleetConfigMetaDto? FleetConfig { get; init; }
 }
 
 /// <summary>
@@ -710,3 +716,23 @@ public sealed record AgentUpdateResultDto(
     bool Restarting);
 
 public sealed record LogTailDto(string Source, IReadOnlyList<string> Lines);
+
+/// <summary>Summary of a <c>fleet.json</c> copy used to decide which PC holds the newest config.</summary>
+public sealed record FleetConfigMetaDto(
+    DateTimeOffset UpdatedAtUtc,
+    string Sha256,
+    string? OriginHost = null);
+
+/// <summary>Full <c>fleet.json</c> sync envelope exchanged between consoles and peer agents.</summary>
+public sealed record FleetConfigSyncDto
+{
+    public DateTimeOffset UpdatedAtUtc { get; init; }
+    public string Sha256 { get; init; } = "";
+    public string Json { get; init; } = "";
+    public string? OriginHost { get; init; }
+}
+
+public sealed record FleetConfigPushResultDto(
+    bool Accepted,
+    string Status,
+    FleetConfigMetaDto? Current);

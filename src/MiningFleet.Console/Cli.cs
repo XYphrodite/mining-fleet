@@ -27,6 +27,7 @@ public static class Cli
           throttle       show, push or pin the mining power limit
           autostart      show or set whether a node mines as soon as it boots
           tariff         show, set or clear the electricity tariff on each node
+          sync           sync fleet.json with peer agents (pulls newest, pushes to lagging)
           version        print the running version
           help           this text
 
@@ -137,6 +138,9 @@ public static class Cli
             case "gpu":
                 return await GpuAsync(config, fleet, names, ct);
 
+            case "sync":
+                return await SyncFleetConfigCliAsync(fleet, names, ct);
+
             case "version" or "--version" or "v":
                 AnsiConsole.WriteLine($"mining-fleet {UpdateService.CurrentVersion}");
                 return 0;
@@ -197,6 +201,25 @@ public static class Cli
     /// release turned out to be broken. Miners keep hashing throughout - the agent restart does
     /// not touch them.
     /// </summary>
+    private static async Task<int> SyncFleetConfigCliAsync(FleetService fleet, string[] args, CancellationToken ct)
+    {
+        var forcePush = args.Any(a => a.Equals("--push", StringComparison.OrdinalIgnoreCase));
+        var report = await fleet.SyncFleetConfigAsync(forcePushLocal: forcePush, ct);
+
+        if (report.PulledFrom is not null)
+            UiHelpers.Result(true, $"pulled newer fleet.json from {report.PulledFrom}");
+        if (report.PushedTo.Count > 0)
+            UiHelpers.Result(true, $"pushed newest fleet.json to {string.Join(", ", report.PushedTo)}");
+        if (report.UpToDate.Count > 0)
+            AnsiConsole.MarkupLine($"[grey]up to date: {UiHelpers.Escape(string.Join(", ", report.UpToDate))}[/]");
+        if (report.Unsupported.Count > 0)
+            AnsiConsole.MarkupLine($"[yellow]needs agent upgrade (no sync): {UiHelpers.Escape(string.Join(", ", report.Unsupported))}[/]");
+        if (report.Offline.Count > 0)
+            AnsiConsole.MarkupLine($"[grey]offline: {UiHelpers.Escape(string.Join(", ", report.Offline))}[/]");
+
+        return report.Offline.Count > 0 ? 1 : 0;
+    }
+
     private static async Task<int> UpgradeAgentsAsync(FleetConfig config, FleetService fleet, string[] names, CancellationToken ct)
     {
         var version = names.FirstOrDefault(n => n.StartsWith("--version=", StringComparison.OrdinalIgnoreCase))?.Split('=', 2)[1];

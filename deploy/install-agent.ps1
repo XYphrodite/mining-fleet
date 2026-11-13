@@ -210,7 +210,7 @@ Get-ChildItem -Path $InstallPath -File -Recurse -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -like '*.old' -or $_.Name -like '*.old-*' } |
     ForEach-Object { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue }
 if ($variantName -eq 'light') {
-    $protectedNames = @('appsettings.json', 'appsettings.Production.json', 'xmrig-api.token', 'miner.json', 'lifetime.json', 'game-mining.json', $VariantMarker)
+    $protectedNames = @('appsettings.json', 'appsettings.Production.json', 'xmrig-api.token', 'miner.json', 'lifetime.json', 'game-mining.json', 'fleet.json', 'fleet.sync.json', $VariantMarker)
     Get-ChildItem -Path $InstallPath -File -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
         if ($protectedNames -contains $_.Name) { return }
         $rel = $_.FullName.Substring($InstallPath.TrimEnd('\', '/').Length).TrimStart('\', '/')

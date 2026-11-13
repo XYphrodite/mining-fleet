@@ -210,7 +210,7 @@ $stageDir = Join-Path ([IO.Path]::GetTempPath()) "mining-fleet-stage-$([guid]::N
 try {
     Expand-Archive -Path $archive -DestinationPath $stageDir -Force
     if ($variantName -eq 'light') {
-        $protectedNames = @('fleet.json', 'gpu-income.json', 'lifetime-income.json', $VariantMarker)
+        $protectedNames = @('fleet.json', 'fleet.sync.json', 'gpu-income.json', 'lifetime-income.json', $VariantMarker)
         Get-ChildItem -Path $target -File -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
             if ($protectedNames -contains $_.Name -or $_.Name -like '*.old' -or $_.Name -like '*.old-*') { return }
             $rel = $_.FullName.Substring($target.TrimEnd('\', '/').Length).TrimStart('\', '/')
