@@ -80,7 +80,7 @@ public sealed class Dashboard : IDisposable
         {
             var economics = Economics.Calculate(states, _config, _network, _price, _gpuQuotes);
             var lifetime = _lifetime.UpdateAndCalculate(states, _config, _network, _price, _coinQuotes, _gpuQuotes);
-            return Compose(states, economics, lifetime);
+            return Compose(states, economics, lifetime, CurrentConsoleHeight());
         }
 
         await ConfigureLiveDisplay(AnsiConsole.Live(BuildFrame()))
@@ -588,7 +588,13 @@ public sealed class Dashboard : IDisposable
             .Overflow(VerticalOverflow.Ellipsis)
             .Cropping(VerticalOverflowCropping.Bottom);
 
-    private IRenderable Compose(IReadOnlyList<NodeState> states, FleetEconomics economics, FleetLifetimeSummary lifetime) =>
+    private static int? CurrentConsoleHeight()
+    {
+        try { return System.Console.WindowHeight is > 0 and var height ? height : null; }
+        catch { return null; }
+    }
+
+    private IRenderable Compose(IReadOnlyList<NodeState> states, FleetEconomics economics, FleetLifetimeSummary lifetime, int? viewportHeight = null) =>
         RenderView(
             states,
             economics,
@@ -599,7 +605,8 @@ public sealed class Dashboard : IDisposable
             _gpuIncomeRows,
             DateTimeOffset.UtcNow,
             _sparklines,
-            lifetime);
+            lifetime,
+            viewportHeight);
 
     public static IRenderable RenderView(
         IReadOnlyList<NodeState> states,
@@ -611,19 +618,21 @@ public sealed class Dashboard : IDisposable
         IReadOnlyList<GpuIncomeRow> gpuIncomeRows,
         DateTimeOffset now,
         SparklineHistory? sparklines = null,
-        FleetLifetimeSummary? lifetime = null)
+        FleetLifetimeSummary? lifetime = null,
+        int? viewportHeight = null)
     {
         // Twelve columns already wrap an 80-column terminal, so the GPU pair only appears when
         // some node in the fleet actually has a card mining. A fleet with none loses nothing.
         var showGpu = states.Any(s => s.Gpu is not null);
         var showLifetime = lifetime is { AnyTracked: true };
+        var compact = viewportHeight is > 0 and <= 36;
 
         var table = new Table()
-            .Border(TableBorder.Rounded)
+            .Border(compact && viewportHeight <= 28 ? TableBorder.Minimal : TableBorder.Rounded)
             .BorderColor(Color.Grey35)
             .Title($"[bold]Nodes[/] [grey]{now.ToLocalTime():HH:mm:ss}[/]")
-            .AddColumn("Node")
-            .AddColumn("State")
+            .AddColumn(new TableColumn("Node").NoWrap())
+            .AddColumn(new TableColumn("State").NoWrap())
             .AddColumn(new TableColumn("Hashrate").RightAligned())
             .AddColumn(new TableColumn("Thr").RightAligned())
             .AddColumn(new TableColumn("Pwr").RightAligned())
@@ -660,7 +669,7 @@ public sealed class Dashboard : IDisposable
 
             var cells = new List<IRenderable>
             {
-                new Markup($"[bold]{UiHelpers.Escape(state.Node.Name)}[/]\n[grey]{UiHelpers.Escape(state.Node.Host)}[/]"),
+                new Markup(FormatNodeCell(state.Node, compact)),
                 new Markup(UiHelpers.StatusBadge(state)),
                 new Markup(cpuCell),
                 new Markup(miner?.MiningThreads is { } thr ? $"{thr}" : "[grey]-[/]"),
@@ -761,18 +770,44 @@ public sealed class Dashboard : IDisposable
             $"[grey]net[/] {(network?.NetworkHashrate is { } nh ? Economics.FormatHashrate(nh) : "-")}   " +
             "[grey]press any key to return[/]");
 
+        var totalsContent = compact
+            ? (IRenderable)summary
+            : new Rows(summary, new Markup(totalsNote));
         var sections = new List<IRenderable>
         {
             table,
-            new Panel(new Rows(summary, new Markup(totalsNote)))
+            new Panel(totalsContent)
                 .Header("[bold]Totals[/]").Border(BoxBorder.Rounded).BorderColor(Color.Grey35).Expand(),
         };
         if (xtmIncome.Any(row => row.Account is not null))
             sections.Add(XtmIncomePanel.Render(xtmIncome, now, money));
         if (gpuIncomeRows.Count > 0)
-            sections.Add(GpuIncomePanel.Render(gpuIncomeRows, money, now));
+            sections.Add(GpuIncomePanel.Render(gpuIncomeRows, money, now, compact));
         sections.Add(footer);
         return new Rows(sections);
+    }
+
+    internal static string FormatNodeCell(NodeConfig node, bool compact)
+    {
+        var name = UiHelpers.Escape(node.Name);
+        if (compact || IsRedundantTailscaleHost(node.Name, node.Host))
+            return $"[bold]{name}[/]";
+        return $"[bold]{name}[/]\n[grey]{UiHelpers.Escape(node.Host)}[/]";
+    }
+
+    private static bool IsRedundantTailscaleHost(string name, string? host)
+    {
+        if (string.IsNullOrWhiteSpace(host)) return true;
+        var trimmed = host.Trim().TrimEnd('.');
+        if (string.Equals(trimmed, name, StringComparison.OrdinalIgnoreCase)) return true;
+        if (!trimmed.EndsWith(".ts.net", StringComparison.OrdinalIgnoreCase)) return false;
+        var dot = trimmed.IndexOf('.');
+        if (dot <= 0) return false;
+        var label = trimmed[..dot];
+        return string.Equals(
+            label.Replace('-', '_'),
+            name.Replace('-', '_'),
+            StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

@@ -61,24 +61,63 @@ public sealed class DashboardStartupTests
     }
 
     [Fact]
-    public void Live_display_crops_from_bottom_so_short_terminals_keep_nodes_table_visible()
+    public void Live_display_fits_six_tailscale_nodes_totals_and_wallets_in_26_row_terminal()
     {
-        var nodes = Enumerable.Range(1, 6)
-            .Select(i => new NodeConfig { Name = $"rig-{i}", Host = $"rig-{i}.ts.net", PowerFallbackWatts = 100 })
-            .ToList();
-        var config = new FleetConfig { Nodes = nodes };
         var now = DateTimeOffset.UtcNow;
-        var states = nodes.Select(n => new NodeState(n, null, null, now, Pending: true)).ToArray();
-        var econ = Economics.Calculate(states, config, null, null);
+        NodeState ActiveNode(NodeConfig node, double cpuH, double gpuH, string unit, double watts) =>
+            new(node, new MiningFleet.Contracts.NodeSnapshotDto(
+                new MiningFleet.Contracts.AgentInfoDto(node.Name, "Windows", "1.0", MiningFleet.Contracts.ApiVersion.Current, 100, true),
+                new MiningFleet.Contracts.MinerStatusDto
+                {
+                    Installed = true, Running = cpuH > 0, Hashrate60s = cpuH, MiningThreads = cpuH > 0 ? 8 : 0,
+                    MsrMod = "intel", SharesGood = 100, SharesTotal = 100, UptimeSeconds = 3600,
+                },
+                new MiningFleet.Contracts.HardwareDto { CpuLoadPercent = 50, CpuTemperatureC = 65, EstimatedPowerWatts = watts, PowerIsMeasured = true })
+            {
+                GpuMiner = gpuH > 0 ? new MiningFleet.Contracts.GpuMinerStatusDto
+                {
+                    Running = true, Hashrate = gpuH, HashrateUnit = unit, AcceptedShares = 50,
+                } : null,
+            }, null, now);
+
+        var nodes = new List<NodeConfig>
+        {
+            new() { Name = "desktop-ib88isg", Host = "desktop-ib88isg.tail08a9a5.ts.net", PowerFallbackWatts = 187 },
+            new() { Name = "mks68i7rtx", Host = "mks68i7rtx.tail08a9a5.ts.net", PowerFallbackWatts = 196 },
+            new() { Name = "moscow_enjoyer", Host = "moscow-enjoyer.tail08a9a5.ts.net", PowerFallbackWatts = 100 },
+            new() { Name = "R5-1600", Host = "r5-1600.tail08a9a5.ts.net", PowerFallbackWatts = 90 },
+            new() { Name = "re-7lqd67ahcm0r", Host = "re-7lqd67ahcm0r.tail08a9a5.ts.net", PowerFallbackWatts = 219 },
+            new() { Name = "workstation-6", Host = "workstation-6.tail08a9a5.ts.net", PowerFallbackWatts = 110 },
+        };
+        var config = new FleetConfig { Nodes = nodes };
+        var states = new[]
+        {
+            ActiveNode(nodes[0], 5890, 63.46e6, "MH/s", 187),
+            ActiveNode(nodes[1], 4100, 50.04e12, "TH/s", 196),
+            new NodeState(nodes[2], null, "timeout", now),
+            new NodeState(nodes[3], null, "timeout", now),
+            ActiveNode(nodes[4], 0, 50.93e12, "TH/s", 219),
+            new NodeState(nodes[5], null, "timeout", now),
+        };
+        var sparklines = new SparklineHistory(capacity: 5);
+        foreach (var s in states) sparklines.RecordOne(s);
+        var quotes = new Dictionary<string, NodeGpuQuote>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["desktop-ib88isg"] = new("QTC", 1e-10, 10.0),
+            ["mks68i7rtx"] = new("PRL", 1.3e-14, 135.0),
+            ["re-7lqd67ahcm0r"] = new("PRL", 1.3e-14, 135.0),
+        };
+        var network = new PoolNetworkStats(null, null, 6.43e9, 7.7e11, null, 0.6, 120, 41_553.0, "RUB");
+        var econ = Economics.Calculate(states, config, network, 41_553.0, quotes);
         var gpuRows = new[]
         {
-            new GpuIncomeRow("rig-1, rig-2", new GpuPoolTarget("kryptex", "prl", "addr1"), null, 135.0),
-            new GpuIncomeRow("rig-3", new GpuPoolTarget("kryptex", "qtc", "addr2"), null, 10.0),
+            new GpuIncomeRow("re-7lqd67ahcm0r, mks68i7rtx", new GpuPoolTarget("kryptex", "prl", "addr1"), null, 135.0),
+            new GpuIncomeRow("desktop-ib88isg", new GpuPoolTarget("kryptex", "qtc", "addr2"), null, 10.0),
         };
-        var frame = Dashboard.RenderView(states, econ, MoneyFormat.Single("RUB"), null, null, [], gpuRows, now);
+        var frame = Dashboard.RenderView(states, econ, MoneyFormat.Single("RUB"), network, 41_553.0, [], gpuRows, now, sparklines, viewportHeight: 26);
 
         using var console = new TestConsole();
-        console.Profile.Width = 160;
+        console.Profile.Width = 165;
         console.Profile.Height = 26;
         var live = Dashboard.ConfigureLiveDisplay(console.Live(frame));
         live.Start(_ => { });
@@ -86,9 +125,13 @@ public sealed class DashboardStartupTests
         Assert.Equal(Spectre.Console.VerticalOverflow.Ellipsis, live.Overflow);
         Assert.Equal(Spectre.Console.VerticalOverflowCropping.Bottom, live.Cropping);
         Assert.True(live.AutoClear);
-        Assert.Contains("rig-1", console.Output);
-        Assert.Contains("rig-6", console.Output);
+        Assert.Contains("desktop-ib88isg", console.Output);
+        Assert.Contains("workstation-6", console.Output);
         Assert.Contains("Totals", console.Output);
+        Assert.Contains("re-7lqd67ahcm0r, mks68i7rtx", console.Output);
+        Assert.Contains("press any key to return", console.Output);
+        Assert.DoesNotContain("tail08a9a5.ts.net", console.Output);
+        Assert.DoesNotContain("...", console.Output);
     }
 
     [Fact]

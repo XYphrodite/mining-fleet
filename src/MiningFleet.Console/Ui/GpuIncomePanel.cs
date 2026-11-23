@@ -18,9 +18,27 @@ public sealed record GpuIncomeRow(
 /// </summary>
 public static class GpuIncomePanel
 {
-    public static IRenderable Render(IReadOnlyList<GpuIncomeRow> rows, MoneyFormat money, DateTimeOffset now)
+    public static IRenderable Render(IReadOnlyList<GpuIncomeRow> rows, MoneyFormat money, DateTimeOffset now, bool compact = false)
     {
         if (rows.Count == 0) return new Text("");
+
+        if (compact)
+        {
+            var table = new Table().Border(TableBorder.Minimal).BorderColor(Color.Grey35)
+                .AddColumn("Wallet / nodes")
+                .AddColumn("Accrued / 24h")
+                .AddColumn("Forecast / 24h")
+                .AddColumn("Value / 24h")
+                .AddColumn("On pool")
+                .AddColumn("Data / basis");
+
+            foreach (var row in rows)
+            {
+                var coin = row.Target.Coin.Split('-')[0].ToUpperInvariant();
+                table.AddRow(Cells(row, coin, money, now));
+            }
+            return table;
+        }
 
         var tables = new List<IRenderable>();
         foreach (var coin in rows.GroupBy(r => r.Target.Coin.Split('-')[0].ToUpperInvariant()))
