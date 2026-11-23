@@ -69,38 +69,42 @@ public sealed class DashboardStartupTests
                 new MiningFleet.Contracts.AgentInfoDto(node.Name, "Windows", "1.0", MiningFleet.Contracts.ApiVersion.Current, 100, true),
                 new MiningFleet.Contracts.MinerStatusDto
                 {
-                    Installed = true, Running = cpuH > 0, Hashrate60s = cpuH, MiningThreads = cpuH > 0 ? 8 : 0,
-                    MsrMod = "intel", SharesGood = 100, SharesTotal = 100, UptimeSeconds = 3600,
+                    Installed = true, Running = cpuH > 0, Hashrate60s = cpuH, MiningThreads = cpuH > 0 ? 14 : 0,
+                    MsrMod = "intel", SharesGood = 1241, SharesTotal = 1243, UptimeSeconds = 35940,
                 },
-                new MiningFleet.Contracts.HardwareDto { CpuLoadPercent = 50, CpuTemperatureC = 65, EstimatedPowerWatts = watts, PowerIsMeasured = true })
+                new MiningFleet.Contracts.HardwareDto { CpuLoadPercent = 59, CpuTemperatureC = 65, EstimatedPowerWatts = watts, PowerIsMeasured = true })
             {
                 GpuMiner = gpuH > 0 ? new MiningFleet.Contracts.GpuMinerStatusDto
                 {
-                    Running = true, Hashrate = gpuH, HashrateUnit = unit, AcceptedShares = 50,
+                    Running = true, Hashrate = gpuH, HashrateUnit = unit, AcceptedShares = 587, StaleShares = 5,
                 } : null,
             }, null, now);
 
         var nodes = new List<NodeConfig>
         {
             new() { Name = "desktop-ib88isg", Host = "desktop-ib88isg.tail08a9a5.ts.net", PowerFallbackWatts = 187 },
-            new() { Name = "mks68i7rtx", Host = "mks68i7rtx.tail08a9a5.ts.net", PowerFallbackWatts = 196 },
+            new() { Name = "mks68i7rtx", Host = "mks68i7rtx.tail08a9a5.ts.net", PowerFallbackWatts = 206 },
             new() { Name = "moscow_enjoyer", Host = "moscow-enjoyer.tail08a9a5.ts.net", PowerFallbackWatts = 100 },
             new() { Name = "R5-1600", Host = "r5-1600.tail08a9a5.ts.net", PowerFallbackWatts = 90 },
             new() { Name = "re-7lqd67ahcm0r", Host = "re-7lqd67ahcm0r.tail08a9a5.ts.net", PowerFallbackWatts = 219 },
-            new() { Name = "workstation-6", Host = "workstation-6.tail08a9a5.ts.net", PowerFallbackWatts = 110 },
+            new() { Name = "xy-mobdesk-r7", Host = "xy-mobdesk-r7.tail08a9a5.ts.net", PowerFallbackWatts = 38 },
         };
         var config = new FleetConfig { Nodes = nodes };
         var states = new[]
         {
-            ActiveNode(nodes[0], 5890, 63.46e6, "MH/s", 187),
-            ActiveNode(nodes[1], 4100, 50.04e12, "TH/s", 196),
+            ActiveNode(nodes[0], 5790, 63.47, "MH/s", 187),
+            ActiveNode(nodes[1], 4880, 49.98, "TH/s", 206),
             new NodeState(nodes[2], null, "timeout", now),
             new NodeState(nodes[3], null, "timeout", now),
-            ActiveNode(nodes[4], 0, 50.93e12, "TH/s", 219),
-            new NodeState(nodes[5], null, "timeout", now),
+            ActiveNode(nodes[4], 0, 50.98, "TH/s", 219),
+            new NodeState(nodes[5], new MiningFleet.Contracts.NodeSnapshotDto(
+                new MiningFleet.Contracts.AgentInfoDto(nodes[5].Name, "Windows", "1.0", MiningFleet.Contracts.ApiVersion.Current, 100, true),
+                new MiningFleet.Contracts.MinerStatusDto { Installed = true, Running = false },
+                new MiningFleet.Contracts.HardwareDto { CpuLoadPercent = 4, CpuTemperatureC = 49, EstimatedPowerWatts = 38, PowerIsMeasured = true }), null, now),
         };
-        var sparklines = new SparklineHistory(capacity: 5);
-        foreach (var s in states) sparklines.RecordOne(s);
+        var sparklines = new SparklineHistory(capacity: 8);
+        for (var tick = 0; tick < 8; tick++)
+            foreach (var s in states) sparklines.RecordOne(s);
         var quotes = new Dictionary<string, NodeGpuQuote>(StringComparer.OrdinalIgnoreCase)
         {
             ["desktop-ib88isg"] = new("QTC", 1e-10, 10.0),
@@ -109,12 +113,40 @@ public sealed class DashboardStartupTests
         };
         var network = new PoolNetworkStats(null, null, 6.43e9, 7.7e11, null, 0.6, 120, 41_553.0, "RUB");
         var econ = Economics.Calculate(states, config, network, 41_553.0, quotes);
+        var lifetimeNodes = new[]
+        {
+            new NodeLifetimeSummary("desktop-ib88isg", true, false, true, now.AddDays(-7), now, 36000, 36000, 36000, 1e8, 0.01, 200, [], 579, 779, 779, false, false, 100, 1024, -245),
+            new NodeLifetimeSummary("mks68i7rtx", true, false, true, now.AddDays(-7), now, 36000, 36000, 36000, 1e8, 0.01, 200, [], 4496, 4696, 4696, false, false, 150, 738, 3958),
+            new NodeLifetimeSummary("moscow_enjoyer", false, false, true, now.AddDays(-7), now, 36000, 36000, 0, 1e8, 0.01, 472, [], 0, 472, 472, false, false, 30, 143, 329),
+            new NodeLifetimeSummary("R5-1600", false, false, false, null, null, 0, 0, 0, 0, 0, null, [], null, null, null, false, false, 0, 0, null),
+            new NodeLifetimeSummary("re-7lqd67ahcm0r", true, false, true, now.AddDays(-7), now, 36000, 0, 36000, 0, 0, 0, [], 3022, 3022, 3022, false, false, 1, 1, 3021),
+            new NodeLifetimeSummary("xy-mobdesk-r7", true, false, true, now.AddDays(-7), now, 100, 100, 0, 1e4, 0, 4.58, [], 0, 4.58, 4.58, false, false, 2, 8.67, -4.09),
+        };
+        var lifetime = new FleetLifetimeSummary(lifetimeNodes, "RUB", now.AddDays(-7), 0.03, [], 876, 8097, 8973, 8973, false, 430.2, 1908.45, 7064.55);
+        var prlTarget = new GpuPoolTarget("kryptex", "prl", "addr1");
+        var qtcTarget = new GpuPoolTarget("kryptex", "qtc", "addr2");
+        var prlIncome = new GpuIncome(
+            new GpuPoolStats(prlTarget, Confirmed: 12.45, Unconfirmed: 0.35, Paid: 48.2, Threshold: 50.0, Payouts: [], FetchedAt: now.AddMinutes(-2)),
+            [
+                new GpuIncomeSample(now.AddHours(-25), 47.00),
+                new GpuIncomeSample(now.AddHours(-16), 52.10),
+                new GpuIncomeSample(now.AddHours(-8), 56.55),
+                new GpuIncomeSample(now.AddMinutes(-2), 61.00),
+            ]);
+        var qtcIncome = new GpuIncome(
+            new GpuPoolStats(qtcTarget, Confirmed: 4.12, Unconfirmed: 0.18, Paid: 20.0, Threshold: 10.0, Payouts: [], FetchedAt: now.AddMinutes(-2)),
+            [
+                new GpuIncomeSample(now.AddHours(-25), 19.60),
+                new GpuIncomeSample(now.AddHours(-16), 21.20),
+                new GpuIncomeSample(now.AddHours(-8), 22.80),
+                new GpuIncomeSample(now.AddMinutes(-2), 24.30),
+            ]);
         var gpuRows = new[]
         {
-            new GpuIncomeRow("re-7lqd67ahcm0r, mks68i7rtx", new GpuPoolTarget("kryptex", "prl", "addr1"), null, 135.0),
-            new GpuIncomeRow("desktop-ib88isg", new GpuPoolTarget("kryptex", "qtc", "addr2"), null, 10.0),
+            new GpuIncomeRow("re-7lqd67ahcm0r, mks68i7rtx", prlTarget, prlIncome, 135.0),
+            new GpuIncomeRow("desktop-ib88isg", qtcTarget, qtcIncome, 10.0),
         };
-        var frame = Dashboard.RenderView(states, econ, MoneyFormat.Single("RUB"), network, 41_553.0, [], gpuRows, now, sparklines, viewportHeight: 26);
+        var frame = Dashboard.RenderView(states, econ, MoneyFormat.Single("RUB"), network, 41_553.0, [], gpuRows, now, sparklines, lifetime, viewportHeight: 26);
 
         using var console = new TestConsole();
         console.Profile.Width = 165;
@@ -125,13 +157,19 @@ public sealed class DashboardStartupTests
         Assert.Equal(Spectre.Console.VerticalOverflow.Ellipsis, live.Overflow);
         Assert.Equal(Spectre.Console.VerticalOverflowCropping.Bottom, live.Cropping);
         Assert.True(live.AutoClear);
-        Assert.Contains("desktop-ib88isg", console.Output);
-        Assert.Contains("workstation-6", console.Output);
-        Assert.Contains("Totals", console.Output);
-        Assert.Contains("re-7lqd67ahcm0r, mks68i7rtx", console.Output);
-        Assert.Contains("press any key to return", console.Output);
-        Assert.DoesNotContain("tail08a9a5.ts.net", console.Output);
-        Assert.DoesNotContain("...", console.Output);
+        var output = console.Output;
+        Assert.True(output.Contains(Economics.FormatHashrate(5790)), $"CPU hashrate missing:\n{output}");
+        Assert.True(output.Contains(Markup.Remove(UiHelpers.GpuBadge(states[0].Gpu))), $"GPU hashrate missing:\n{output}");
+        Assert.True(output.Contains("1241/1243"), $"1241/1243 missing:\n{output}");
+        Assert.True(output.Contains("desktop-ib88isg"), $"desktop-ib88isg missing:\n{output}");
+        Assert.True(output.Contains("xy-mobdesk-r7"), $"xy-mobdesk-r7 missing:\n{output}");
+        Assert.True(output.Contains("Totals"), $"Totals missing:\n{output}");
+        Assert.True(output.Contains("All-time net"), $"All-time net missing:\n{output}");
+        Assert.True(output.Contains("PRL") && output.Contains("re-7lqd67ahcm0r, mks68i7rtx"), $"PRL row missing:\n{output}");
+        Assert.True(output.Contains("QTC") && output.Contains("24h mean"), $"QTC row missing:\n{output}");
+        Assert.True(output.Contains("press any key to return"), $"footer missing:\n{output}");
+        Assert.DoesNotContain("tail08a9a5.ts.net", output);
+        Assert.True(!output.Contains('…') && !output.Contains("..."), $"overflow ellipsis present:\n{output}");
     }
 
     [Fact]

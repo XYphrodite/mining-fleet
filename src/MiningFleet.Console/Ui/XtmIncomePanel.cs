@@ -5,20 +5,27 @@ namespace MiningFleet.Console.Ui;
 
 public static class XtmIncomePanel
 {
-    public static IRenderable Render(IReadOnlyList<XtmIncomeRow> rows, DateTimeOffset now, MoneyFormat? money = null)
+    public static IRenderable Render(IReadOnlyList<XtmIncomeRow> rows, DateTimeOffset now, MoneyFormat? money = null, bool compact = false)
     {
         // An unknown node is not an XTM account. Keep failures for known accounts visible,
         // but leave unrelated/offline nodes to the main fleet table.
         var wallets = rows.Where(row => row.Account is not null).ToList();
         if (wallets.Count == 0) return new Text("");
         var format = money ?? MoneyFormat.Single("RUB");
-        var table = new Table().Border(TableBorder.Rounded)
-            .Title("[bold]XTM — pool wallet income[/]")
-            .AddColumn("Nodes / shared wallet")
-            .AddColumn("Accrued / last 24h")
-            .AddColumn("Forecast / next 24h")
-            .AddColumn("Value / next 24h")
-            .AddColumn("Data / basis");
+        var table = compact
+            ? new Table().Border(TableBorder.None)
+                .AddColumn(new TableColumn("[grey underline]XTM wallet / nodes[/]").Padding(0, 0, 2, 0).NoWrap())
+                .AddColumn(new TableColumn("[grey underline]Accrued / 24h[/]").Padding(0, 0, 2, 0).NoWrap())
+                .AddColumn(new TableColumn("[grey underline]Forecast / 24h[/]").Padding(0, 0, 2, 0).NoWrap())
+                .AddColumn(new TableColumn("[grey underline]Value / 24h[/]").Padding(0, 0, 2, 0).NoWrap())
+                .AddColumn(new TableColumn("[grey underline]Data / basis[/]").Padding(0, 0, 0, 0).NoWrap())
+            : new Table().Border(TableBorder.Rounded)
+                .Title("[bold]XTM — pool wallet income[/]")
+                .AddColumn("Nodes / shared wallet")
+                .AddColumn("Accrued / last 24h")
+                .AddColumn("Forecast / next 24h")
+                .AddColumn("Value / next 24h")
+                .AddColumn("Data / basis");
         foreach (var row in wallets)
         {
             var income = row.Income;
@@ -42,6 +49,7 @@ public static class XtmIncomePanel
             if (row.ConfigUnverified) status += " [yellow]config unverified[/]";
             table.AddRow(UiHelpers.Escape(row.Nodes), accrued, forecast, value, status);
         }
+        if (compact) return table;
         return new Rows(table, new Markup("[grey]Wallet totals include all workers, once per wallet. "
             + "Accruals include locked rewards. Forecast assumes the same activity and pool conditions; "
             + "pauses are included in the historical mean.[/]"));

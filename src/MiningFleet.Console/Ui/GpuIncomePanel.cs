@@ -24,18 +24,18 @@ public static class GpuIncomePanel
 
         if (compact)
         {
-            var table = new Table().Border(TableBorder.Minimal).BorderColor(Color.Grey35)
-                .AddColumn("Wallet / nodes")
-                .AddColumn("Accrued / 24h")
-                .AddColumn("Forecast / 24h")
-                .AddColumn("Value / 24h")
-                .AddColumn("On pool")
-                .AddColumn("Data / basis");
+            var table = new Table().Border(TableBorder.None)
+                .AddColumn(new TableColumn("[grey underline]Wallet / nodes[/]").Padding(0, 0, 2, 0).NoWrap())
+                .AddColumn(new TableColumn("[grey underline]Accrued / 24h[/]").Padding(0, 0, 2, 0).NoWrap())
+                .AddColumn(new TableColumn("[grey underline]Forecast / 24h[/]").Padding(0, 0, 2, 0).NoWrap())
+                .AddColumn(new TableColumn("[grey underline]Value / 24h[/]").Padding(0, 0, 2, 0).NoWrap())
+                .AddColumn(new TableColumn("[grey underline]On pool[/]").Padding(0, 0, 2, 0).NoWrap())
+                .AddColumn(new TableColumn("[grey underline]Data / basis[/]").Padding(0, 0, 0, 0).NoWrap());
 
             foreach (var row in rows)
             {
                 var coin = row.Target.Coin.Split('-')[0].ToUpperInvariant();
-                table.AddRow(Cells(row, coin, money, now));
+                table.AddRow(Cells(row, coin, money, now, prefixCoin: true));
             }
             return table;
         }
@@ -62,10 +62,13 @@ public static class GpuIncomePanel
         return new Rows(tables);
     }
 
-    private static IRenderable[] Cells(GpuIncomeRow row, string coin, MoneyFormat money, DateTimeOffset now)
+    private static IRenderable[] Cells(GpuIncomeRow row, string coin, MoneyFormat money, DateTimeOffset now, bool prefixCoin = false)
     {
         var income = row.Income;
-        var nodes = new Markup(UiHelpers.Escape(row.Nodes));
+        var label = prefixCoin
+            ? $"[bold]{UiHelpers.Escape(coin)}[/]  {UiHelpers.Escape(row.Nodes)}"
+            : UiHelpers.Escape(row.Nodes);
+        var nodes = new Markup(label);
         if (income is null)
         {
             var gap = new Markup("[grey]unavailable[/]");

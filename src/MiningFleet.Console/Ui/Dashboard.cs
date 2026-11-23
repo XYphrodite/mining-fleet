@@ -626,36 +626,45 @@ public sealed class Dashboard : IDisposable
         var showGpu = states.Any(s => s.Gpu is not null);
         var showLifetime = lifetime is { AnyTracked: true };
         var compact = viewportHeight is > 0 and <= 36;
+        var tight = viewportHeight is > 0 and <= 30;
+
+        TableColumn Col(string title, bool right = false)
+        {
+            var col = new TableColumn(tight ? $"[grey underline]{title}[/]" : title).NoWrap();
+            if (right) col.RightAligned();
+            if (compact) col.Padding(0, 0, 1, 0);
+            return col;
+        }
 
         var table = new Table()
-            .Border(compact && viewportHeight <= 28 ? TableBorder.Minimal : TableBorder.Rounded)
+            .Border(tight ? TableBorder.None : TableBorder.Rounded)
             .BorderColor(Color.Grey35)
             .Title($"[bold]Nodes[/] [grey]{now.ToLocalTime():HH:mm:ss}[/]")
-            .AddColumn(new TableColumn("Node").NoWrap())
-            .AddColumn(new TableColumn("State").NoWrap())
-            .AddColumn(new TableColumn("Hashrate").RightAligned())
-            .AddColumn(new TableColumn("Thr").RightAligned())
-            .AddColumn(new TableColumn("Pwr").RightAligned())
-            .AddColumn(new TableColumn("Pages").RightAligned())
-            .AddColumn(new TableColumn("MSR").RightAligned())
-            .AddColumn(new TableColumn("CPU").RightAligned())
-            .AddColumn(new TableColumn("Temp").RightAligned())
-            .AddColumn(new TableColumn("Watts").RightAligned())
-            .AddColumn(new TableColumn("Shares").RightAligned());
+            .AddColumn(Col("Node"))
+            .AddColumn(Col("State"))
+            .AddColumn(Col("Hashrate", right: true))
+            .AddColumn(Col("Thr", right: true))
+            .AddColumn(Col("Pwr", right: true))
+            .AddColumn(Col("Pages", right: true))
+            .AddColumn(Col("MSR", right: true))
+            .AddColumn(Col("CPU", right: true))
+            .AddColumn(Col("Temp", right: true))
+            .AddColumn(Col("Watts", right: true))
+            .AddColumn(Col("Shares", right: true));
 
         if (showGpu)
         {
             table
-                .AddColumn(new TableColumn("GPU").RightAligned())
-                .AddColumn(new TableColumn("GPU sh").RightAligned());
+                .AddColumn(Col("GPU", right: true))
+                .AddColumn(Col("GPU sh", right: true));
         }
 
-        table.AddColumn(new TableColumn("Income/d").RightAligned().NoWrap());
+        table.AddColumn(Col("Income/d", right: true));
         if (showLifetime)
         {
-            table.AddColumn(new TableColumn("All-time").RightAligned().NoWrap());
+            table.AddColumn(Col("All-time", right: true));
         }
-        table.AddColumn(new TableColumn("Uptime").RightAligned());
+        table.AddColumn(Col("Uptime", right: true));
 
         foreach (var state in states.OrderBy(s => s.Node.Name, StringComparer.OrdinalIgnoreCase))
         {
@@ -780,7 +789,7 @@ public sealed class Dashboard : IDisposable
                 .Header("[bold]Totals[/]").Border(BoxBorder.Rounded).BorderColor(Color.Grey35).Expand(),
         };
         if (xtmIncome.Any(row => row.Account is not null))
-            sections.Add(XtmIncomePanel.Render(xtmIncome, now, money));
+            sections.Add(XtmIncomePanel.Render(xtmIncome, now, money, compact));
         if (gpuIncomeRows.Count > 0)
             sections.Add(GpuIncomePanel.Render(gpuIncomeRows, money, now, compact));
         sections.Add(footer);
