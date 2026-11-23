@@ -56,15 +56,18 @@ public sealed class Dashboard : IDisposable
 
     public async Task ShowAsync(CancellationToken ct)
     {
-        UiHelpers.Header("Fleet dashboard");
         var enabled = _fleet.EnabledNodes;
         if (enabled.Count == 0)
         {
+            UiHelpers.Header("Fleet dashboard");
             AnsiConsole.MarkupLine("[yellow]No enabled nodes configured. Add or enable one from the Nodes menu.[/]");
             UiHelpers.Pause();
             return;
         }
 
+        // Start Live at row 0 so Spectre's height calculation matches the full
+        // terminal instead of leaking extra lines into scrollback on every tick.
+        AnsiConsole.Clear();
         DrainKeys();
         _xtmFetchedAt = DateTimeOffset.MinValue;
         var interval = TimeSpan.FromSeconds(Math.Max(1, _config.PollIntervalSeconds));
@@ -80,8 +83,7 @@ public sealed class Dashboard : IDisposable
             return Compose(states, economics, lifetime);
         }
 
-        await AnsiConsole.Live(BuildFrame())
-            .AutoClear(true)
+        await ConfigureLiveDisplay(AnsiConsole.Live(BuildFrame()))
             .StartAsync(async ctx =>
             {
                 Task<MarketSnapshot?>? marketTask = null;
@@ -576,6 +578,16 @@ public sealed class Dashboard : IDisposable
         return null;
     }
 
+    /// <summary>
+    /// Crop overflow from the bottom rather than Spectre's default top cropping,
+    /// so short windows keep the Nodes table and Totals panel visible instead of
+    /// collapsing the top of the dashboard into "...".
+    /// </summary>
+    public static LiveDisplay ConfigureLiveDisplay(LiveDisplay live) =>
+        live.AutoClear(true)
+            .Overflow(VerticalOverflow.Ellipsis)
+            .Cropping(VerticalOverflowCropping.Bottom);
+
     private IRenderable Compose(IReadOnlyList<NodeState> states, FleetEconomics economics, FleetLifetimeSummary lifetime) =>
         RenderView(
             states,
@@ -749,13 +761,18 @@ public sealed class Dashboard : IDisposable
             $"[grey]net[/] {(network?.NetworkHashrate is { } nh ? Economics.FormatHashrate(nh) : "-")}   " +
             "[grey]press any key to return[/]");
 
-        return new Rows(
+        var sections = new List<IRenderable>
+        {
             table,
             new Panel(new Rows(summary, new Markup(totalsNote)))
                 .Header("[bold]Totals[/]").Border(BoxBorder.Rounded).BorderColor(Color.Grey35).Expand(),
-            XtmIncomePanel.Render(xtmIncome, now, money),
-            GpuIncomePanel.Render(gpuIncomeRows, money, now),
-            footer);
+        };
+        if (xtmIncome.Any(row => row.Account is not null))
+            sections.Add(XtmIncomePanel.Render(xtmIncome, now, money));
+        if (gpuIncomeRows.Count > 0)
+            sections.Add(GpuIncomePanel.Render(gpuIncomeRows, money, now));
+        sections.Add(footer);
+        return new Rows(sections);
     }
 
     /// <summary>

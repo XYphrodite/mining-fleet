@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using MiningFleet.Console;
 using MiningFleet.Console.Ui;
+using Spectre.Console;
 using Spectre.Console.Testing;
 
 namespace MiningFleet.Console.Tests;
@@ -57,6 +58,37 @@ public sealed class DashboardStartupTests
 
         Assert.Equal("", history.CpuMarkup("mks68i7rtx"));
         Assert.Equal("", history.GpuMarkup("mks68i7rtx"));
+    }
+
+    [Fact]
+    public void Live_display_crops_from_bottom_so_short_terminals_keep_nodes_table_visible()
+    {
+        var nodes = Enumerable.Range(1, 6)
+            .Select(i => new NodeConfig { Name = $"rig-{i}", Host = $"rig-{i}.ts.net", PowerFallbackWatts = 100 })
+            .ToList();
+        var config = new FleetConfig { Nodes = nodes };
+        var now = DateTimeOffset.UtcNow;
+        var states = nodes.Select(n => new NodeState(n, null, null, now, Pending: true)).ToArray();
+        var econ = Economics.Calculate(states, config, null, null);
+        var gpuRows = new[]
+        {
+            new GpuIncomeRow("rig-1, rig-2", new GpuPoolTarget("kryptex", "prl", "addr1"), null, 135.0),
+            new GpuIncomeRow("rig-3", new GpuPoolTarget("kryptex", "qtc", "addr2"), null, 10.0),
+        };
+        var frame = Dashboard.RenderView(states, econ, MoneyFormat.Single("RUB"), null, null, [], gpuRows, now);
+
+        using var console = new TestConsole();
+        console.Profile.Width = 160;
+        console.Profile.Height = 26;
+        var live = Dashboard.ConfigureLiveDisplay(console.Live(frame));
+        live.Start(_ => { });
+
+        Assert.Equal(Spectre.Console.VerticalOverflow.Ellipsis, live.Overflow);
+        Assert.Equal(Spectre.Console.VerticalOverflowCropping.Bottom, live.Cropping);
+        Assert.True(live.AutoClear);
+        Assert.Contains("rig-1", console.Output);
+        Assert.Contains("rig-6", console.Output);
+        Assert.Contains("Totals", console.Output);
     }
 
     [Fact]
